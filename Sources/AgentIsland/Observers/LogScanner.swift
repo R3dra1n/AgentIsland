@@ -23,7 +23,7 @@ actor LogScanner {
         let fm = FileManager.default
         var hookFailed = false
         if fm.fileExists(atPath: hookURL.path) {
-            do { _ = try hookReader.read(hookURL) { hooks.consume($0) } }
+            do { _ = try hookReader.read(hookURL) { hooks.consume($0, source: source) } }
             catch { hookFailed = true }
         }
         guard fm.fileExists(atPath: root.path) else {
@@ -79,6 +79,12 @@ actor LogScanner {
                 // successful read must rebuild it from the complete transcript.
                 sessions[url] = SessionState()
                 readers.removeValue(forKey: url)
+            }
+        }
+        if source == "codex" {
+            for (url, session) in sessions {
+                guard let id = sessionIDs[url] else { continue }
+                hooks.reconcileResolvedAsync(session: id, ids: session.resolvedAsyncRequestIDs, date: session.changedAt)
             }
         }
         var states = sessions.filter { !hooks.hookedSessions.contains(sessionIDs[$0.key] ?? "") }.values.map { $0.visibleState(now: now) }

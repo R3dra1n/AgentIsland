@@ -154,6 +154,105 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertTrue(value.asyncRequests.isEmpty)
     }
 
+    func testCompletedCodexTurnKeepsAsyncQuestionUntilExplicitReply() {
+        var value = SessionState()
+        value.consume(["payload": ["type": "task_started", "turn_id": "t"]], source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "call_123"), source: "codex", date: now.addingTimeInterval(1))
+        value.consume(["type": "response_item", "payload": ["type": "function_call_output", "call_id": "call_123"]], source: "codex", date: now.addingTimeInterval(2))
+        value.consume(["payload": ["type": "task_complete", "turn_id": "t"]], source: "codex", date: now.addingTimeInterval(3))
+        XCTAssertEqual(value.visibleState(now: now.addingTimeInterval(3600)), .awaitingInput)
+        XCTAssertEqual(value.asyncRequests, ["call_123"])
+        value.consume(["payload": ["type": "task_started", "turn_id": "next"]], source: "codex", date: now.addingTimeInterval(4))
+        XCTAssertEqual(value.state, .awaitingInput)
+        value.consume(["type": "response_item", "payload": ["type": "message", "role": "user",
+            "internal_chat_message_metadata_passthrough": ["turn_id": "next", "content_item_kinds": ["user.text"]],
+            "content": [["type": "input_text", "text": "<send_user_message_question_reply>call_123</send_user_message_question_reply>"]]]], source: "codex", date: now.addingTimeInterval(5))
+        XCTAssertTrue(value.asyncRequests.isEmpty)
+        XCTAssertEqual(value.state, .running)
+    }
+
+    func testCodexStopPreservesAsyncQuestionButAntigravityStopIsUnchanged() {
+        var codex = HookStateStore()
+        codex.consume(hook("UserPromptSubmit"), source: "codex")
+        codex.consume(hook("PreToolUse", tool: "request_user_input_async", second: 1), source: "codex")
+        codex.consume(hook("Stop", second: 2), source: "codex")
+        XCTAssertEqual(codex.states(now: now.addingTimeInterval(3600)).max(), .awaitingInput)
+        codex.consume(hook("UserPromptSubmit", second: 3), source: "codex")
+        XCTAssertEqual(codex.states(now: now.addingTimeInterval(3)).max(), .running)
+
+        var antigravity = HookStateStore()
+        antigravity.consume(hook("UserPromptSubmit"), source: "antigravity")
+        antigravity.consume(hook("PreToolUse", tool: "request_user_input_async", second: 1), source: "antigravity")
+        antigravity.consume(hook("Stop", second: 2), source: "antigravity")
+        XCTAssertEqual(antigravity.states(now: now.addingTimeInterval(2)).max(), .completed)
+    }
+
+    func testNewCodexTurnKeepsUnansweredQuestionsAndResolvesOnlyMatchingID() {
+        var store = HookStateStore()
+        store.consume(hook("UserPromptSubmit", turn: "old"), source: "codex")
+        store.consume(hook("PreToolUse", tool: "request_user_input_async", id: "q1", turn: "old", second: 1), source: "codex")
+        store.consume(hook("PreToolUse", tool: "request_user_input_async", id: "q2", turn: "old", second: 2), source: "codex")
+        store.consume(hook("Stop", turn: "old", second: 3), source: "codex")
+        store.consume(hook("UserPromptSubmit", turn: "new", second: 4), source: "codex")
+        let owner = HookStateStore.Owner(session: "s", agent: "main")
+        XCTAssertEqual(store.owners[owner]?.pendingRequests, ["q1", "q2"])
+        store.reconcileResolvedAsync(session: "different", ids: ["q1"], date: now.addingTimeInterval(5))
+        XCTAssertEqual(store.owners[owner]?.pendingRequests, ["q1", "q2"])
+        store.reconcileResolvedAsync(session: "s", ids: ["q1"], date: now.addingTimeInterval(5))
+        XCTAssertEqual(store.owners[owner]?.pendingRequests, ["q2"])
+        XCTAssertEqual(store.states(now: now.addingTimeInterval(5)).max(), .awaitingInput)
+        store.reconcileResolvedAsync(session: "s", ids: ["q2"], date: now.addingTimeInterval(6))
+        XCTAssertEqual(store.states(now: now.addingTimeInterval(6)).max(), .running)
+    }
+
+    func testExplicitOldTurnResolutionOnlyClearsItsOutstandingQuestion() {
+        var value = SessionState()
+        value.consume(["payload": ["type": "task_started", "turn_id": "old"]], source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "old-question"), source: "codex", date: now)
+        value.consume(["payload": ["type": "task_started", "turn_id": "new"]], source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "new-question"), source: "codex", date: now)
+        value.consume(["payload": ["type": "request_resolved", "turn_id": "old", "request_id": "old-question"]], source: "codex", date: now)
+        XCTAssertEqual(value.pendingRequests, ["new-question"])
+        XCTAssertEqual(value.resolvedAsyncRequestIDs, ["old-question"])
+        XCTAssertEqual(value.state, .awaitingInput)
+    }
+
+    func testScannerReconcilesExplicitAsyncAnswerAcrossHookAndLog() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        func bytes(_ events: [[String: Any]]) throws -> Data {
+            var data = Data()
+            for event in events { data.append(try JSONSerialization.data(withJSONObject: event)); data.append(10) }
+            return data
+        }
+        let logURL = root.appendingPathComponent("session.jsonl")
+        let hookURL = root.appendingPathComponent("hooks")
+        let before: [[String: Any]] = [
+            ["type": "session_meta", "payload": ["id": "s"]],
+            ["payload": ["type": "task_started", "turn_id": "old"]],
+            call("request_user_input_async", id: "call_123"),
+            ["payload": ["type": "task_complete", "turn_id": "old"]],
+            ["payload": ["type": "task_started", "turn_id": "new"]]
+        ]
+        try bytes(before).write(to: logURL)
+        try bytes([hook("UserPromptSubmit", turn: "old"),
+                   hook("PreToolUse", tool: "request_user_input_async", id: "call_123", turn: "old", second: 1),
+                   hook("Stop", turn: "old", second: 2),
+                   hook("UserPromptSubmit", turn: "new", second: 3)]).write(to: hookURL)
+        let scanner = LogScanner(source: "codex", root: root, hookURL: hookURL)
+        let waiting = await scanner.scan(now: now.addingTimeInterval(4))
+        XCTAssertEqual(waiting.state, .awaitingInput)
+        XCTAssertEqual(waiting.codexRequests.map(\.requestID), ["call_123"])
+        let handle = try FileHandle(forWritingTo: logURL)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: bytes([["payload": ["type": "request_resolved", "turn_id": "old", "request_id": "call_123"]]]))
+        try handle.close()
+        let answered = await scanner.scan(now: now.addingTimeInterval(5))
+        XCTAssertTrue(answered.codexRequests.isEmpty)
+        XCTAssertEqual(answered.state, .running)
+    }
+
     func testEnvironmentMetadataIsNotAnAnswer() {
         var value = SessionState()
         value.consume(call("request_user_input_async"), source: "codex", date: now)

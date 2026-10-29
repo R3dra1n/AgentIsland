@@ -8,7 +8,7 @@ struct HookStateStore: Sendable {
     var sessionDates: [String: Date] = [:]
     var hookedSessions: Set<String> = []
 
-    mutating func consume(_ event: [String: Any]) {
+    mutating func consume(_ event: [String: Any], source: String? = nil) {
         guard let session = event["session_id"] as? String,
               let name = event["hook_event_name"] as? String,
               let timestamp = event["received_at"] as? Double else { return }
@@ -36,9 +36,26 @@ struct HookStateStore: Sendable {
             }
             guard let turn else { return }
             if seenTurns[session, default: []].contains(turn), sessionTurns[session] != turn { return }
-            owners = owners.filter { $0.key.session != session }
+            if source == "codex" {
+                for key in Array(owners.keys) where key.session == session {
+                    guard var prior = owners[key] else { continue }
+                    if prior.retainOutstandingAsyncQuestions() {
+                        if let requestID = event["request_id"] as? String { prior.inputSubmitted(requestID: requestID) }
+                        prior.turnID = turn
+                        prior.transition(prior.pendingRequests.isEmpty ? .running : .awaitingInput, date)
+                        owners[key] = prior
+                    } else { owners.removeValue(forKey: key) }
+                }
+            } else {
+                owners = owners.filter { $0.key.session != session }
+            }
             sessionTurns[session] = turn
             seenTurns[session, default: []].insert(turn)
+            if source == "codex", owners[owner] != nil {
+                sessionDates[session] = date
+                hookedSessions.insert(session)
+                return
+            }
         } else if let turn, let active = sessionTurns[session], turn != active { return }
         if sessionTurns[session] == nil, let turn { sessionTurns[session] = turn }
         var value = owners[owner] ?? SessionState()
@@ -80,17 +97,22 @@ struct HookStateStore: Sendable {
             }
             value.transition(value.pendingRequests.isEmpty ? .running : .awaitingInput, date)
         case "Stop", "AgentResponse":
-            value.clearRequests()
             let hasError = event["has_error"] as? Bool == true
             let reason = event["termination_reason"] as? String
             let fullyIdle = event["fully_idle"] as? Bool ?? true
             if hasError || reason == "error" || reason == "max_steps_exceeded" {
+                value.clearRequests()
                 value.transition(.failed, date)
             } else if reason == "cancelled" || reason == "interrupted" {
+                value.clearRequests()
                 value.transition(.interrupted, date)
+            } else if source == "codex" && value.retainOutstandingAsyncQuestions() {
+                value.transition(.awaitingInput, date)
             } else if !fullyIdle {
+                value.clearRequests()
                 value.transition(.running, date)
             } else {
+                value.clearRequests()
                 value.transition(.completed, date)
             }
         case "Interrupt": value.clearRequests(); value.transition(.interrupted, date)
@@ -100,6 +122,18 @@ struct HookStateStore: Sendable {
         owners[owner] = value
         sessionDates[session] = date
         hookedSessions.insert(session)
+    }
+
+    mutating func reconcileResolvedAsync(session: String, ids: Set<String>, date: Date) {
+        guard !ids.isEmpty else { return }
+        for key in Array(owners.keys) where key.session == session {
+            guard var value = owners[key] else { continue }
+            let matches = value.asyncRequests.intersection(ids)
+            guard !matches.isEmpty else { continue }
+            for id in matches { value.resolveRequest(id) }
+            value.transition(value.pendingRequests.isEmpty ? .running : .awaitingInput, date)
+            owners[key] = value
+        }
     }
 
     func states(now: Date) -> [AIState] { owners.values.map { $0.visibleState(now: now) } }

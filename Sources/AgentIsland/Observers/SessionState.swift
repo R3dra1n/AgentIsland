@@ -7,6 +7,8 @@ struct SessionState: Sendable {
     var changedAt = Date.distantPast
     var pendingRequests: Set<String> = []
     var asyncRequests: Set<String> = []
+    // Only explicitly identified answers may reconcile a separate hook stream.
+    var resolvedAsyncRequestIDs: Set<String> = []
     var inputRequests: Set<String> = []
     var antigravitySawInputResult = false
     var antigravityQuestionUnambiguous = false
@@ -39,21 +41,37 @@ struct SessionState: Sendable {
             if let incomingTurn, seenTurns.contains(incomingTurn), incomingTurn != turnID { return }
             if let incomingTurn { seenTurns.insert(incomingTurn) }
             turnID = incomingTurn
-            pendingRequests.removeAll()
-            asyncRequests.removeAll()
-            inputRequests.removeAll()
+            let waitingForAsync = source == "codex" && retainOutstandingAsyncQuestions()
+            if !waitingForAsync {
+                pendingRequests.removeAll()
+                asyncRequests.removeAll()
+                inputRequests.removeAll()
+                requestContexts.removeAll()
+            }
             antigravitySawInputResult = false
             antigravityQuestionUnambiguous = false
             antigravityQuestionIdentity = nil
-            requestContexts.removeAll()
             commandDigests.removeAll()
             pendingActionDetail = nil
-            transition(.running, date)
+            transition(waitingForAsync ? .awaitingInput : .running, date)
             return
         }
-        if let incomingTurn, let turnID, incomingTurn != turnID { return }
+        if let incomingTurn, let turnID, incomingTurn != turnID {
+            if source == "codex", ["request_resolved", "user_input_resolved"].contains(kind),
+               let id = payload["request_id"] as? String, asyncRequests.contains(id) {
+                recordExplicitAsyncResolution(id)
+                resolveRequest(id)
+                transition(pendingRequests.isEmpty ? .running : .awaitingInput, date)
+            }
+            return
+        }
         if ["task_complete", "turn_complete"].contains(kind) {
-            clearRequests(); transition(.completed, date); return
+            if source == "codex" && retainOutstandingAsyncQuestions() {
+                transition(.awaitingInput, date)
+            } else {
+                clearRequests(); transition(.completed, date)
+            }
+            return
         }
         if ["task_failed", "turn_failed"].contains(kind) {
             clearRequests(); transition(.failed, date); return
@@ -71,6 +89,7 @@ struct SessionState: Sendable {
         }
         if source == "codex", ["request_resolved", "user_input_resolved"].contains(kind),
            let id = payload["request_id"] as? String {
+            recordExplicitAsyncResolution(id)
             resolveRequest(id)
             transition(pendingRequests.isEmpty ? .running : .awaitingInput, date)
             return
@@ -87,6 +106,7 @@ struct SessionState: Sendable {
                             resolvedId = String(text[range])
                         }
                     }
+                    if let resolvedId { recordExplicitAsyncResolution(resolvedId) }
                     inputSubmitted(requestID: resolvedId)
                     if state == .awaitingInput { transition(pendingRequests.isEmpty ? .running : .awaitingInput, date) }
                 }
@@ -119,7 +139,10 @@ struct SessionState: Sendable {
                     let id = payload["call_id"] as? String ?? "input"
                     pendingRequests.insert(id)
                     inputRequests.insert(id)
-                    if name.hasSuffix("request_user_input_async") { asyncRequests.insert(id) }
+                    if name.hasSuffix("request_user_input_async") {
+                        resolvedAsyncRequestIDs.remove(id)
+                        asyncRequests.insert(id)
+                    }
                     transition(.awaitingInput, date)
                 } else {
                     if state != .completed {
@@ -305,11 +328,32 @@ struct SessionState: Sendable {
         antigravityQuestionIdentity = nil
     }
 
+    /// A queued async question can outlive the turn that scheduled it. Drop
+    /// unrelated approvals but retain its identity and question context until
+    /// a user response or explicit cancellation resolves it.
+    @discardableResult
+    mutating func retainOutstandingAsyncQuestions() -> Bool {
+        let retained = asyncRequests.intersection(inputRequests).intersection(pendingRequests)
+        pendingRequests = retained
+        asyncRequests = retained
+        inputRequests = retained
+        requestContexts = requestContexts.filter { retained.contains($0.key) }
+        commandDigests.removeAll()
+        return !retained.isEmpty
+    }
+
     mutating func resolveRequest(_ id: String) {
         pendingRequests.remove(id)
         asyncRequests.remove(id)
         inputRequests.remove(id)
         commandDigests.removeValue(forKey: id)
+    }
+
+    private mutating func recordExplicitAsyncResolution(_ id: String) {
+        guard asyncRequests.contains(id) else { return }
+        // Bound the reconciliation history; call IDs are unique in normal use.
+        if resolvedAsyncRequestIDs.count >= 256 { resolvedAsyncRequestIDs.removeAll() }
+        resolvedAsyncRequestIDs.insert(id)
     }
 
     // A legacy hook has no answer ID. Only resolve an unambiguous input request,
