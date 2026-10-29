@@ -1,11 +1,20 @@
 import SwiftUI
 
+private struct HUDContentSizeKey: PreferenceKey {
+    static let defaultValue: CGSize = .zero
+    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
+        value = nextValue()
+    }
+}
+
 public struct FloatingHUDView: View {
     @ObservedObject var appState: AppState
     @State private var isPulsing = false
+    private let onContentSizeChange: (CGSize) -> Void
 
-    public init(appState: AppState) {
+    public init(appState: AppState, onContentSizeChange: @escaping (CGSize) -> Void = { _ in }) {
         self.appState = appState
+        self.onContentSizeChange = onContentSizeChange
     }
 
     private var itemsToShow: [AIObserverItem] {
@@ -103,9 +112,14 @@ public struct FloatingHUDView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
             .padding(.top, 4)
+            // Measure the unconstrained content, not the ScrollView viewport.
+            // Session names, feedback and action buttons can exceed any fixed
+            // per-provider width estimate.
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: HUDContentSizeKey.self, value: geometry.size)
+            })
         }
-        .frame(maxWidth: max(100, (NSScreen.main?.visibleFrame.width ?? 1000) - 20),
-               maxHeight: max(100, (NSScreen.main?.visibleFrame.height ?? 700) - 20))
+        .onPreferenceChange(HUDContentSizeKey.self, perform: onContentSizeChange)
         .contextMenu { contextMenuItems() }
         .animation(.easeInOut(duration: 0.25), value: itemsToShow)
         .onAppear { isPulsing = true }

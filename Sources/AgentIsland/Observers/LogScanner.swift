@@ -146,7 +146,7 @@ actor LogScanner {
            session.inputRequests.count == 1, session.antigravityQuestionUnambiguous,
            hooksPermitReply(session: session, id: sessionIDs[url] ?? url.path, now: now),
            let fileID = readers[url]?.fileID {
-            pendingIdentity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.changedAt, requestID: session.inputRequests.first)
+            pendingIdentity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.antigravityRequestStartedAt ?? session.changedAt, requestID: session.inputRequests.first, sessionEpoch: session.antigravitySessionEpoch, generation: session.antigravityRequestGeneration)
         }
         return ObserverSnapshot(state: winner, description: detail, lastActiveDate: lastActive,
             actionDetail: source == "codex" ? (codexDetail ?? actionDetail) : actionDetail, codexRequests: requests,
@@ -179,7 +179,7 @@ actor LogScanner {
                let (url, session) = waiting.first, session.inputRequests.count == 1,
                session.antigravityQuestionUnambiguous, hooksPermitReply(session: session, id: id, now: now),
                let fileID = readers[url]?.fileID {
-                identity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.changedAt, requestID: session.inputRequests.first)
+                identity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.antigravityRequestStartedAt ?? session.changedAt, requestID: session.inputRequests.first, sessionEpoch: session.antigravitySessionEpoch, generation: session.antigravityRequestGeneration)
             }
             let description: String
             switch state {

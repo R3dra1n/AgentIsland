@@ -10,6 +10,7 @@ public final class FloatingHUDWindowController: NSObject {
     private var cancellables = Set<AnyCancellable>()
     private var appState: AppState?
     private var isInitialized = false
+    private var measuredContentSize: CGSize = .zero
 
     public override init() {
         super.init()
@@ -34,7 +35,12 @@ public final class FloatingHUDWindowController: NSObject {
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
 
-        let hudView = FloatingHUDView(appState: state)
+        let hudView = FloatingHUDView(appState: state) { [weak self] size in
+            guard let self, size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+                  abs(self.measuredContentSize.width - size.width) >= 1 || abs(self.measuredContentSize.height - size.height) >= 1 else { return }
+            self.measuredContentSize = size
+            self.updateWindowPosition(animated: false)
+        }
         let hostingView = DraggableHostingView(rootView: hudView)
         hostingView.wantsLayer = true
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
@@ -102,8 +108,11 @@ public final class FloatingHUDWindowController: NSObject {
         let count = max(1, items.count)
         let antigravityRows = items.filter { $0.icon == "antigravity" }.count
         let groupCount = max(1, count - max(0, antigravityRows - 1))
-        let wantedWidth: CGFloat = isVertical ? 360 : CGFloat(groupCount * 280 + 160)
-        let wantedHeight: CGFloat = isVertical ? CGFloat(count * 50 + 120) : CGFloat(110 + max(0, antigravityRows - 1) * 50)
+        // Session labels, status badges and the action button can exceed the
+        // old 360-point estimate. Keep every row readable when it fits on the
+        // screen; the HUD's scroll view handles narrower displays.
+        let wantedWidth: CGFloat = max(measuredContentSize.width, isVertical ? 520 : CGFloat(groupCount * 480 + 80))
+        let wantedHeight: CGFloat = max(measuredContentSize.height, isVertical ? CGFloat(count * 50 + 120) : CGFloat(110 + max(0, antigravityRows - 1) * 50))
         let windowWidth = min(wantedWidth, max(100, screen.visibleFrame.width - 20))
         #if AGENTISLAND_ISOLATED_PREVIEW
         let windowHeight = min(wantedHeight, max(100, screen.visibleFrame.height - 130))

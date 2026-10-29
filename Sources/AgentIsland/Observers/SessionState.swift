@@ -10,6 +10,12 @@ struct SessionState: Sendable {
     var inputRequests: Set<String> = []
     var antigravitySawInputResult = false
     var antigravityQuestionUnambiguous = false
+    // Survives repeated observations of one pending question. Replaying or
+    // replacing a transcript creates a fresh epoch, so old panels cannot
+    // accidentally bind to a new, identical request.
+    let antigravitySessionEpoch = UUID()
+    var antigravityRequestGeneration: UInt64 = 0
+    var antigravityRequestStartedAt: Date?
     private struct AntigravityQuestionIdentity: Equatable, Sendable {
         let requestID: String
         let question: String
@@ -171,6 +177,8 @@ struct SessionState: Sendable {
                         }
                         if inputRequests.isEmpty {
                             eligibleQuestion = true
+                            antigravityRequestGeneration &+= 1
+                            antigravityRequestStartedAt = date
                         } else if let nextIdentity,
                                   antigravityQuestionUnambiguous,
                                   !antigravitySawInputResult,
@@ -340,12 +348,16 @@ struct AntigravityPendingIdentity: Equatable, Sendable {
     let fileID: UInt64
     let changedAt: Date
     let requestID: String?
+    let sessionEpoch: UUID?
+    let generation: UInt64?
 
-    init(transcript: URL, fileID: UInt64, changedAt: Date, requestID: String? = nil) {
+    init(transcript: URL, fileID: UInt64, changedAt: Date, requestID: String? = nil, sessionEpoch: UUID? = nil, generation: UInt64? = nil) {
         self.transcript = transcript
         self.fileID = fileID
         self.changedAt = changedAt
         self.requestID = requestID
+        self.sessionEpoch = sessionEpoch
+        self.generation = generation
     }
 }
 

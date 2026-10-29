@@ -104,4 +104,39 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.antigravitySessions.count, 1)
         XCTAssertEqual(snapshot.antigravitySessions.first?.state, .awaitingInput)
     }
+
+    func testRepeatedQuestionKeepsIdentityButAnsweredAndReaskedQuestionGetsNewIdentity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(), file = transcript(root, UUID().uuidString)
+        var event = question("Same", date: now)
+        var call = try XCTUnwrap((event["tool_calls"] as? [[String: Any]])?.first)
+        call["id"] = "stable-request"
+        event["tool_calls"] = [call]
+        try write([event], to: file)
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let initialSnapshot = await scanner.scan(now: now)
+        let initial = try XCTUnwrap(initialSnapshot.antigravitySessions.first?.pendingIdentity)
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: JSONSerialization.data(withJSONObject: event) + Data([10]))
+        let repeatedSnapshot = await scanner.scan(now: now.addingTimeInterval(1))
+        let repeated = try XCTUnwrap(repeatedSnapshot.antigravitySessions.first?.pendingIdentity)
+        XCTAssertEqual(initial, repeated)
+        for record: [String: Any] in [
+            ["type": "GENERIC", "status": "DONE"],
+            ["type": "PLANNER_RESPONSE", "status": "DONE", "content": "done"],
+            event
+        ] {
+            try handle.write(contentsOf: JSONSerialization.data(withJSONObject: record) + Data([10]))
+        }
+        try handle.close()
+        let nextSnapshot = await scanner.scan(now: now.addingTimeInterval(2))
+        let next = try XCTUnwrap(nextSnapshot.antigravitySessions.first?.pendingIdentity)
+        XCTAssertNotEqual(initial, next)
+        try write([event], to: file)
+        let replacedSnapshot = await scanner.scan(now: now.addingTimeInterval(3))
+        let replaced = try XCTUnwrap(replacedSnapshot.antigravitySessions.first?.pendingIdentity)
+        XCTAssertNotEqual(next, replaced)
+    }
 }

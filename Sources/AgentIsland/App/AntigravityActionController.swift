@@ -7,11 +7,26 @@ struct AntigravityPreparedQuestion: Equatable, Sendable {
     let question: AntigravityQuestion
 }
 
+private enum AntigravityPreparationResult: Sendable {
+    case ready(AntigravityPreparedQuestion)
+    case connectionUnavailable, queryFailed, unsupportedQuestion, detailMismatch
+
+    var failureMessage: String {
+        switch self {
+        case .ready: return ""
+        case .connectionUnavailable: return "无法连接 Antigravity 本机服务，请检查版本"
+        case .queryFailed: return "无法读取此会话的问题，请在 Antigravity 处理"
+        case .unsupportedQuestion: return "问题结构无法确认，请在 Antigravity 处理"
+        case .detailMismatch: return "显示的问题与会话不一致，请在 Antigravity 处理"
+        }
+    }
+}
+
 @MainActor
 enum AntigravityActionController {
     private static let consentKey = "antigravityLocalReplyConsent"
     private static var activeWorker: Task<Bool, Never>?
-    private static var preparationTasks: [String: Task<AntigravityPreparedQuestion?, Never>] = [:]
+    private static var preparationTasks: [String: Task<AntigravityPreparationResult, Never>] = [:]
     private static var preparationIDs: [String: UUID] = [:]
 
     static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String) {
@@ -34,26 +49,34 @@ enum AntigravityActionController {
             return
         }
         state.antigravitySessionFeedback[sessionID] = "正在验证此会话的问题…"
-        let task = Task.detached(priority: .userInitiated) { () -> AntigravityPreparedQuestion? in
+        let task = Task.detached(priority: .userInitiated) { () -> AntigravityPreparationResult in
+            let endpoint: AntigravityLocalTransport.Endpoint
+            do { endpoint = try await AntigravityLocalTransport.discover() }
+            catch { return .connectionUnavailable }
+            let data: Data
             do {
-                let endpoint = try await AntigravityLocalTransport.discover()
                 let query = try JSONSerialization.data(withJSONObject: ["cascadeId": cascade.uuidString.lowercased()])
-                let data = try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query)
-                let question = try AntigravityInteractionParser.parse(data, cascadeID: cascade)
-                try Task.checkCancellation()
-                guard question.matchesDisplayedDetail(expectedDetail) else { return nil }
-                return AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question)
-            } catch { return nil }
+                data = try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query)
+            } catch { return .queryFailed }
+            let question: AntigravityQuestion
+            do { question = try AntigravityInteractionParser.parse(data, cascadeID: cascade) }
+            catch { return .unsupportedQuestion }
+            guard !Task.isCancelled, question.matchesDisplayedDetail(expectedDetail) else { return .detailMismatch }
+            return .ready(AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question))
         }
         preparationTasks[sessionID] = task
         Task {
-            let prepared = await task.value
+            let result = await task.value
             guard preparationIDs[sessionID] == requestID else { return }
             preparationTasks.removeValue(forKey: sessionID)
             let latest = state.antigravityObserver.sessions.first { $0.id == sessionID }
-            guard let prepared, latest?.state == .awaitingInput, latest?.pendingIdentity == expectedIdentity,
+            guard latest?.state == .awaitingInput, latest?.pendingIdentity == expectedIdentity,
                   latest?.actionDetail == expectedDetail, UserDefaults.standard.bool(forKey: consentKey) else {
-                state.antigravitySessionFeedback[sessionID] = "无法验证问题，请在 Antigravity 中回答"
+                state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开后确认"
+                return
+            }
+            guard case .ready(let prepared) = result else {
+                state.antigravitySessionFeedback[sessionID] = result.failureMessage
                 return
             }
             state.antigravityPreparedQuestions[sessionID] = prepared
@@ -164,7 +187,7 @@ enum AntigravityActionController {
         if UserDefaults.standard.bool(forKey: consentKey) { return true }
         let alert = NSAlert()
         alert.messageText = "启用 Antigravity 后台回复？"
-        alert.informativeText = "AgentIsland 将在你提交回复时读取 Antigravity 本机进程的临时认证信息，并访问该问题所属的本机会话。认证信息仅用于本机连接，不会保存；问题内容可能在内存中处理。该接口尚未公开，版本变化可能导致回复失败。"
+        alert.informativeText = "AgentIsland 将在你打开或提交回复时读取 Antigravity 本机进程的临时认证信息，并访问该问题所属的本机会话。认证信息仅用于本机连接，不会保存；问题内容可能在内存中处理。该接口尚未公开，版本变化可能导致回复失败。"
         alert.addButton(withTitle: "启用")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return false }
