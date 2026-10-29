@@ -1,0 +1,30 @@
+{
+  "repository": "https://github.com/lobehub/lobe-icons",
+  "commit": "2e76c48721e91b9aaa40803a0fa2eb8aca7399c4",
+  "files": {
+    "codex.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/openai.svg",
+      "sha256": "a595df6b423920c67a7f8f73c063e4bfb72d415948097b6cac063a2366bb5186"
+    },
+    "claude.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/claude.svg",
+      "sha256": "365a70a7eb3956d9b9a96086058ebe04e1dbd8e291a756ad964e8a283fbd6d38"
+    },
+    "cursor.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/cursor.svg",
+      "sha256": "0cb51bddf264ae108926fd554c063ef40fc1aac3c5c921ddb39ad184e4e5d0ef"
+    },
+    "antigravity.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/antigravity.svg",
+      "sha256": "43f551fd125c17fb54c8c74eb461924fb97f32bb64ac89f73bb73852753a6461"
+    },
+    "windsurf.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/windsurf.svg",
+      "sha256": "e3c836aae05a3741e33d5c5a38d4167aacfbb69e480d098b8b94cad8c90e0d08"
+    },
+    "trae.svg": {
+      "url": "https://raw.githubusercontent.com/lobehub/lobe-icons/2e76c48721e91b9aaa40803a0fa2eb8aca7399c4/packages/static-svg/icons/trae.svg",
+      "sha256": "59ef6255dfce52d4b1e77aff4e1b4ee3cda71cda735b4fb45575e9874a1c11f6"
+    }
+  }
+}

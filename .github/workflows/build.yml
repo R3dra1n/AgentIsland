@@ -1,0 +1,49 @@
+name: Test and package preview
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify paired Xcode SDK and Swift toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+      - name: Check publishable source
+        run: python3 scripts/check_public_source.py
+      - name: Test Swift and Python
+        run: bash scripts/test.sh
+      - name: Package universal developer preview
+        env:
+          AGENTISLAND_UNIVERSAL: '1'
+        run: bash scripts/package_preview.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AgentIsland-macOS-preview
+          path: dist/*
+  draft-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: AgentIsland-macOS-preview
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          prerelease: true
+          files: dist/*
+          generate_release_notes: true

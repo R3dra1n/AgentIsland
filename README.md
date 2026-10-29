@@ -1,0 +1,45 @@
+# AgentIsland
+
+AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗。本版本处于**开发者预览**，需要 macOS 14 或更新版本。
+
+## 支持范围
+
+| 助手 | 预览版能力 | 限制 |
+| --- | --- | --- |
+| Codex Desktop | 状态、问题、文本回复和一次性审批 | 依赖非公开的本机 IPC；桌面端版本变化后需要重新验证 |
+| Antigravity | 状态、问题展示和后台回复处于实验验证阶段 | 依赖未公开接口；仅尝试桌面版 2.27.0。隔离版已在一台 Mac 验证文字及选项回复；审批和更广泛的多会话情况尚未完成验收，请在原应用核对 |
+| Claude、Cursor、Windsurf、Trae | 实验性状态监控 | 各助手能力不同，未完成独立发布验收 |
+
+红色表示需要操作，黄色表示执行中，绿色表示完成。状态反映可获得的事件，不保证助手已经收到操作。
+
+## 获取和安装
+
+目前尚无公开 Release。此副本中的 `dist` 文件是本地测试包，不代表通过了干净系统或实际回传验收。正式下载入口将在验收后提供。
+
+预览包使用临时签名、未公证。安装可能需要用户在 macOS 设置中手动放行，部分功能需要辅助功能权限；不要关闭全局安全检查。使用 Developer ID 签名及公证可改善发布体验。
+
+## 从源码运行
+
+需要 macOS 14+、Xcode 及 Swift 6。开发测试使用 Python；Codex 和 Antigravity 的应用内原生 Hook 安装与运行不需要 Python，部分实验性助手的开发工具仍需要 Python。
+
+```sh
+bash scripts/test.sh
+bash scripts/build_app.sh
+open build-output/AgentIsland.app
+```
+
+`scripts/build_app.sh` 默认将应用生成到 `build-output`，避免覆盖项目根目录中正在使用的应用；重复构建会备份该输出目录中的上一版。构建后检查签名与隐私，再在隔离环境运行。
+
+## Hook 与隐私
+
+Codex 原生 IPC 不需要 Python。Codex 和 Antigravity 的可选 Hook 提供原生记录器与配置入口，运行时不需要 Python；首次配置仍需确认目标助手版本实际使用的 `hooks.json` 位置。Cursor／Windsurf 的实验性 Hook 工具仍使用 Python。[Hook 说明](integrations/README.md)描述配置及备份。
+
+AgentIsland 在本机读取日志及必要的界面／IPC 信息，可能在悬浮窗显示问题或命令。不要公开真实会话、审批内容、密钥、配置或未经检查的截图。详情见 [隐私说明](PRIVACY.md)。
+
+Antigravity 后台回复首次使用时需明确同意：应用会临时读取其本机语言服务器的认证令牌，并查询待回答的本机会话；令牌不保存、不上传。验证失败或结果不明确时，请回 Antigravity 检查，避免重复回复。可在设置中撤销授权。
+
+## 开发与反馈
+
+运行 `python3 scripts/check_public_source.py` 扫描部分常见敏感内容；该检查不能替代历史、二进制、截图或人工审查。请按 [安全反馈](SECURITY.md) 私下报告敏感问题，遵循 [贡献指南](CONTRIBUTING.md)。
+
+本项目使用 [MIT](LICENSE)；第三方素材及商标说明见 [NOTICES](Resources/NOTICES.md)。

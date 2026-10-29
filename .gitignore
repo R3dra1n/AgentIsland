@@ -1,0 +1,29 @@
+# Swift PM
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Build products
+*.app/
+*.o
+*.a
+*.dylib
+*.dSYM/
+dist/
+build-output/
+
+# Patch files
+*.patch
+
+# Python
+__pycache__/
+*.pyc
