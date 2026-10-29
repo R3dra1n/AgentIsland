@@ -38,4 +38,20 @@ final class AntigravityPrevalidationPolicyTests: XCTestCase {
             sessions: [session("a", identity: identity(2))], inFlight: [], attempted: attempted, prepared: [:], limit: 2)
         XCTAssertEqual(changed.map(\.0), ["a"])
     }
+
+    func testPreparedQuestionIsNotRepeatedAndChangedDetailsAreNewTarget() {
+        let id = identity(), uuid = UUID()
+        let question = AntigravityQuestion(cascadeID: uuid, trajectoryID: uuid, stepIndex: 0,
+            question: "synthetic question", options: [], stepFingerprint: Data([1]))
+        let endpoint = AntigravityLocalTransport.Endpoint(pid: 123, port: 456, certificate: Data([1]))
+        let prepared = ["a": AntigravityPreparedQuestion(identity: id, detail: "synthetic question", question: question, endpoint: endpoint)]
+        let same = AntigravityPrevalidationPolicy.candidates(enabled: true, consent: true,
+            sessions: [session("a", identity: id)], inFlight: [], attempted: [:], prepared: prepared, limit: 2)
+        XCTAssertTrue(same.isEmpty)
+        let changed = AntigravitySessionSnapshot(id: "a", state: .awaitingInput, description: "waiting",
+            actionDetail: "different question", pendingIdentity: id, lastActiveDate: nil)
+        let next = AntigravityPrevalidationPolicy.candidates(enabled: true, consent: true,
+            sessions: [changed], inFlight: [], attempted: [:], prepared: prepared, limit: 2)
+        XCTAssertEqual(next.map(\.0), ["a"])
+    }
 }
