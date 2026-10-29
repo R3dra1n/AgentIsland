@@ -17,7 +17,7 @@ struct AntigravityLocalTransport {
         ["2.27.0", "2.28.0"].contains(version)
     }
 
-    struct Endpoint: Sendable { let pid: Int; let port: Int; let certificate: Data }
+    struct Endpoint: Equatable, Sendable { let pid: Int; let port: Int; let certificate: Data }
     enum Failure: Error { case unavailable, unsafe, unsupported, invalidResponse }
     private final class Capture: @unchecked Sendable { var bytes = Data(); var overflow = false }
 
@@ -135,6 +135,25 @@ struct AntigravityLocalTransport {
         }
         guard candidates.count == 1 else { throw Failure.unavailable }
         return candidates[0]
+    }
+
+    /// Reuse only the endpoint captured when this question was opened. Keep
+    /// signature, process and port checks, and retain the original TLS pin.
+    static func revalidate(_ endpoint: Endpoint) throws {
+        let current = try server()
+        guard current.pid == endpoint.pid else { throw Failure.unsafe }
+        try validateSignature(current.bundle)
+        guard try ports(pid: endpoint.pid).contains(endpoint.port) else { throw Failure.unsafe }
+    }
+
+    static func endpointForReply(prepared: Endpoint?,
+                                 discover: @Sendable () async throws -> Endpoint,
+                                 revalidate: @Sendable (Endpoint) async throws -> Void) async throws -> Endpoint {
+        if let prepared {
+            try await revalidate(prepared)
+            return prepared
+        }
+        return try await discover()
     }
 
     static func post(_ endpoint: Endpoint, method: String, data: Data) async throws -> Data {

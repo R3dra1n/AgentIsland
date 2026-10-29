@@ -326,7 +326,9 @@ public struct AISegmentView: View {
                         Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
                     }
                     Text(rowFeedback ?? (item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title))
-                        .lineLimit(2).frame(maxWidth: 180)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: item.id == "codex" && appState.codexActionFeedback == nil, vertical: false)
+                        .frame(maxWidth: 180)
                         .help(item.id == "codex" ? (appState.codexActionFeedback ?? item.description) : item.description)
                         .font(.system(size: 9, weight: .semibold))
                         .padding(.horizontal, 5)

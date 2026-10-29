@@ -139,4 +139,17 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         let replaced = try XCTUnwrap(replacedSnapshot.antigravitySessions.first?.pendingIdentity)
         XCTAssertNotEqual(next, replaced)
     }
+
+    func testNewAntigravitySessionIsDiscoveredOnNextTwoSecondRefresh() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(), scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let before = await scanner.scan(now: now)
+        XCTAssertTrue(before.antigravitySessions.isEmpty)
+        try write([question("New session", date: now)], to: transcript(root, UUID().uuidString))
+        let after = await scanner.scan(now: now.addingTimeInterval(2.1))
+        XCTAssertEqual(after.antigravitySessions.count, 1)
+        XCTAssertEqual(after.antigravitySessions.first?.state, .awaitingInput)
+    }
 }

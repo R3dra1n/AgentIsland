@@ -34,7 +34,10 @@ actor LogScanner {
             }
             return ObserverSnapshot(state: .unknown, description: "未找到日志目录；无法确认状态", lastActiveDate: nil)
         }
-        if now.timeIntervalSince(lastDiscovery) >= 5 {
+        // New Antigravity transcripts should appear promptly; existing files
+        // are still read on every poll. Keep other providers' cadence intact.
+        let discoveryInterval: TimeInterval = source == "antigravity" ? 2 : 5
+        if now.timeIntervalSince(lastDiscovery) >= discoveryInterval {
             guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: source == "antigravity" ? [] : [.skipsHiddenFiles], errorHandler: { _, _ in true }) else {
                 return ObserverSnapshot(state: .idle, description: "日志目录不可读取", lastActiveDate: nil)
             }

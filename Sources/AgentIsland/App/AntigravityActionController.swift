@@ -5,6 +5,7 @@ struct AntigravityPreparedQuestion: Equatable, Sendable {
     let identity: AntigravityPendingIdentity
     let detail: String
     let question: AntigravityQuestion
+    let endpoint: AntigravityLocalTransport.Endpoint
 }
 
 private enum AntigravityPreparationResult: Sendable {
@@ -62,7 +63,7 @@ enum AntigravityActionController {
             do { question = try AntigravityInteractionParser.parse(data, cascadeID: cascade) }
             catch { return .unsupportedQuestion }
             guard !Task.isCancelled, question.matchesDisplayedDetail(expectedDetail) else { return .detailMismatch }
-            return .ready(AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question))
+            return .ready(AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question, endpoint: endpoint))
         }
         preparationTasks[sessionID] = task
         Task {
@@ -122,28 +123,36 @@ enum AntigravityActionController {
             feedback("问题详情或会话标识不可用，请在 Antigravity 中回答")
             return
         }
+        var preparedEndpoint: AntigravityLocalTransport.Endpoint?
         if let sessionID {
             guard identity == expectedIdentity, detail == expectedDetail, let expectedQuestion,
-                  state.antigravityPreparedQuestions[sessionID] == AntigravityPreparedQuestion(identity: identity, detail: detail, question: expectedQuestion) else {
+                  let prepared = state.antigravityPreparedQuestions[sessionID],
+                  prepared.identity == identity, prepared.detail == detail, prepared.question == expectedQuestion else {
                 feedback("问题已变化，请重新打开后确认")
                 return
             }
+            preparedEndpoint = prepared.endpoint
         }
         guard consent() else { return }
         if let sessionID {
             let current = state.antigravityObserver.sessions.first { $0.id == sessionID }
             guard current?.state == .awaitingInput, current?.pendingIdentity == identity, current?.actionDetail == detail,
                   UserDefaults.standard.bool(forKey: consentKey), let expectedQuestion,
-                  state.antigravityPreparedQuestions[sessionID] == AntigravityPreparedQuestion(identity: identity, detail: detail, question: expectedQuestion) else {
+                  let prepared = state.antigravityPreparedQuestions[sessionID],
+                  prepared.identity == identity, prepared.detail == detail, prepared.question == expectedQuestion,
+                  prepared.endpoint == preparedEndpoint else {
                 feedback("问题已变化，请重新打开后确认")
                 return
             }
         }
         state.antigravityActionInFlight = true
         feedback("正在验证 Antigravity 问题…")
+        let capturedEndpoint = preparedEndpoint
         let worker = Task.detached(priority: .userInitiated) { () -> Bool in
                 do {
-                    let endpoint = try await AntigravityLocalTransport.discover()
+                    let endpoint = try await AntigravityLocalTransport.endpointForReply(prepared: capturedEndpoint,
+                        discover: { try await AntigravityLocalTransport.discover() },
+                        revalidate: { try AntigravityLocalTransport.revalidate($0) })
                     let query = try JSONSerialization.data(withJSONObject: ["cascadeId": cascade.uuidString.lowercased()])
                     return try await AntigravityReplyWorkflow.run(cascade: cascade, detail: detail, selection: selection, expectedQuestion: expectedQuestion,
                         fetch: { try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query) },
