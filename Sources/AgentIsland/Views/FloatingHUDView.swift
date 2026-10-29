@@ -181,6 +181,7 @@ public struct AISegmentView: View {
             presentedSessionID = nil; presentedIdentity = nil; presentedDetail = nil; presentedQuestion = nil
             if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
                 let id = String(item.id.dropFirst(AppState.antigravitySessionPrefix.count))
+                presentedSessionID = id
                 if let session = appState.antigravityObserver.sessions.first(where: { $0.id == id }),
                    let identity = session.pendingIdentity, let detail = session.actionDetail,
                    detail == item.actionDetail {
@@ -212,8 +213,8 @@ public struct AISegmentView: View {
                                                         expectedDetail: frozenDetail, expectedQuestion: question)
                         })
                 } else {
-                    ActionDetailPopover(detail: shown, itemName: item.name, supportsFreeText: false, onChoose: nil, onSend: nil)
-                    Text("正在验证，或请在 Antigravity 中处理。")
+                    ActionDetailPopover(detail: shown, itemName: item.name, supportsFreeText: false, showsDisabledActions: true, onChoose: nil, onSend: nil)
+                    Text(presentedIdentity == nil ? "无法确认此会话的问题身份，请在 Antigravity 中处理。" : (rowFeedback ?? "正在验证此会话的问题…"))
                         .font(.system(size: 10)).foregroundColor(.secondary)
                 }
             }
@@ -417,6 +418,7 @@ struct ActionDetailPopover: View {
     let detail: String
     let itemName: String
     var supportsFreeText: Bool = true
+    var showsDisabledActions: Bool = false
     var onChoose: ((Int) -> Void)?
     var onSend: ((String, String?) -> Void)?
     
@@ -449,7 +451,7 @@ struct ActionDetailPopover: View {
                                         .foregroundColor(.primary.opacity(0.85))
                                         .lineLimit(3)
                                     Spacer()
-                                    if onSend != nil {
+                                    if onSend != nil || onChoose != nil || showsDisabledActions {
                                     Button(action: {
                                         if let onChoose, let number = Int(numStr) { onChoose(number) }
                                         else { onSend?(numStr, nil) }
@@ -460,6 +462,7 @@ struct ActionDetailPopover: View {
                                     .buttonStyle(.borderedProminent)
                                     .controlSize(.mini)
                                     .tint(.blue)
+                                    .disabled(onChoose == nil && onSend == nil)
                                     }
                                 }
                             } else {
