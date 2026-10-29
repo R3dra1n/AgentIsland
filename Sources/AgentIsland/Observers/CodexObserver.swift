@@ -45,20 +45,20 @@ public final class CodexObserver: AIObserverProtocol {
                 var snapshot = await scanner.scan()
                 let previousRequests = self?.pendingRequests ?? []
                 let pendingSessions = Set((snapshot.codexRequests + previousRequests).map(\.sessionID))
+                let fallbackActive = await scanner.activeCodexSessionStates()
                 let recent = await scanner.recentCodexSessionIDs()
-                let sessions = pendingSessions.union(recent).filter { !$0.isEmpty }
+                let sessions = pendingSessions.union(recent).union(fallbackActive.keys).filter { !$0.isEmpty }
                 var liveStates: [CodexLiveActivity] = []
                 await withTaskGroup(of: (String, [CodexPendingRequest]?, CodexLiveActivity?).self) { group in
                     for session in sessions {
                         group.addTask {
-                            let live = await CodexDesktopBridge.shared.requests(session: session, force: pendingSessions.contains(session))
+                            let live = await CodexDesktopBridge.shared.requests(session: session, force: pendingSessions.contains(session) || fallbackActive[session] != nil)
                             return (session, live?.requests, live?.activity)
                         }
                     }
                     for await (session, requests, state) in group {
-                        if let requests, let state {
-                            snapshot.codexRequests.removeAll { $0.sessionID == session }
-                            snapshot.codexRequests.append(contentsOf: requests)
+                        if let requests, let state, state.state != .unknown {
+                            snapshot.codexRequests = Self.mergeRequests(snapshot.codexRequests, live: requests, session: session)
                             liveStates.append(state)
                         } else if !snapshot.codexRequests.contains(where: { $0.sessionID == session }) {
                             snapshot.codexRequests.append(contentsOf: previousRequests.filter { $0.sessionID == session })
@@ -70,7 +70,7 @@ public final class CodexObserver: AIObserverProtocol {
                     snapshot.state = .awaitingInput
                     snapshot.description = "Codex 正在等待操作"
                     snapshot.actionDetail = snapshot.codexRequests.first?.context
-                } else if let live = Self.aggregateLiveStates(liveStates) {
+                } else if let live = Self.aggregateLiveAndFallback(liveStates, fallback: fallbackActive) {
                     snapshot.state = live.state
                     snapshot.description = "Codex：\(live.state.title)"
                     snapshot.lastActiveDate = live.startedAt ?? snapshot.lastActiveDate
@@ -84,6 +84,28 @@ public final class CodexObserver: AIObserverProtocol {
     }
 
     public func stopObserving() { polling?.cancel(); polling = nil }
+
+    nonisolated static func mergeRequests(_ existing: [CodexPendingRequest], live: [CodexPendingRequest], session: String) -> [CodexPendingRequest] {
+        let asyncQuestions = existing.filter { $0.sessionID == session && $0.isQuestion && $0.isAsynchronous }
+        var result = existing.filter { $0.sessionID != session }
+        for var request in live {
+            if asyncQuestions.contains(where: { $0.requestID == request.requestID }) { request.isAsynchronous = true }
+            result.append(request)
+        }
+        result.append(contentsOf: asyncQuestions.filter { previous in
+            !live.contains { $0.sessionID == previous.sessionID && $0.requestID == previous.requestID }
+        })
+        return result
+    }
+
+    nonisolated static func aggregateLiveAndFallback(_ liveStates: [CodexLiveActivity], fallback: [String: AIState]) -> CodexLiveActivity? {
+        let authoritativeSessions = Set(liveStates.filter { $0.state != .unknown }.map(\.sessionID))
+        let activeFallback = fallback.compactMap { session, state -> CodexLiveActivity? in
+            guard !authoritativeSessions.contains(session), state == .running || state == .awaitingInput else { return nil }
+            return .init(sessionID: session, turnID: nil, state: state, startedAt: nil)
+        }
+        return aggregateLiveStates(liveStates + activeFallback)
+    }
 
     // Active work wins. Once inactive, show the newest turn, not the most severe
     // outcome in historical conversations. Poll time must never refresh an old result.

@@ -95,6 +95,13 @@ final class CodexNativeBridgeTests: XCTestCase {
         snapshot["threadRuntimeStatus"] = ["type": "notLoaded"]
         XCTAssertEqual(CodexNativeBridge.executionState(snapshot), "unknown")
     }
+    func testLatestActiveTurnWinsOverTransientIdleRuntime() {
+        let snapshot: [String: Any] = ["threadRuntimeStatus": ["type": "idle"], "turns": [
+            ["turnId": "old", "turnStartedAtMs": 1, "status": "completed"],
+            ["turnId": "current", "turnStartedAtMs": 2, "status": "inProgress"]
+        ]]
+        XCTAssertEqual(CodexNativeBridge.executionState(snapshot), "running")
+    }
     func sockets() throws -> (Int32, Int32) {
         var fds: [Int32] = [-1, -1]
         guard socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }

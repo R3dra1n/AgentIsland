@@ -217,6 +217,9 @@ enum CodexNativeBridge {
         if runtime == "active" { return "running" }
         guard runtime == "idle" else { return "unknown" }
         let status = latestTurn(state)["status"] as? String ?? "idle"
+        // Runtime and turn state can arrive on different updates. Do not
+        // display completion while the latest known turn is still active.
+        if status == "inProgress" { return "running" }
         return ["completed", "failed", "interrupted"].contains(status) ? status : "idle"
     }
 

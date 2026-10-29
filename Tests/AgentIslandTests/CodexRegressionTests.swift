@@ -33,6 +33,51 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertNil(CodexObserver.aggregateLiveStates([activity(.unknown, second: 3)]))
     }
 
+    func testUnreachableActiveSessionIsNotHiddenByAnotherSessionsCompletion() {
+        let otherCompletion = activity(.completed, second: 2, session: "other")
+        let activeFallback: [String: AIState] = ["active": .running]
+        XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([otherCompletion], fallback: activeFallback)?.state, .running)
+        XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([otherCompletion], fallback: ["active": .awaitingInput])?.state, .awaitingInput)
+        XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([otherCompletion, activity(.unknown, second: 3, session: "active")], fallback: activeFallback)?.state, .running)
+        let ownCompletion = activity(.completed, second: 3, session: "active")
+        XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([otherCompletion, ownCompletion], fallback: activeFallback)?.state, .completed)
+    }
+
+    func testQueuedAsyncQuestionSurvivesEmptyDesktopRequestListUntilLogResolvesIt() {
+        let queued = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "q", isQuestion: true,
+            context: "synthetic question", isAsynchronous: true)
+        let other = CodexPendingRequest(sessionID: "b", turnID: "t", requestID: "other", isQuestion: true, context: nil)
+        let merged = CodexObserver.mergeRequests([queued, other], live: [], session: "a")
+        XCTAssertEqual(merged, [other, queued])
+        // When the log observes the answer, the next scan no longer includes
+        // the queued request, so an empty desktop list can clear it normally.
+        XCTAssertEqual(CodexObserver.mergeRequests([other], live: [], session: "a"), [other])
+        var liveQuestion = CodexPendingRequest(sessionID: "a", turnID: nil, requestID: "q", isQuestion: true, context: nil)
+        liveQuestion.desktopMethod = "item/tool/requestUserInput"
+        let liveMerged = CodexObserver.mergeRequests([queued], live: [liveQuestion], session: "a")
+        XCTAssertEqual(liveMerged.count, 1)
+        XCTAssertTrue(liveMerged[0].isAsynchronous)
+        XCTAssertEqual(liveMerged[0].desktopMethod, "item/tool/requestUserInput")
+    }
+
+    func testScannerReportsActiveCodexSessionForIPCFailureFallback() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID().uuidString, now = Date()
+        let events: [[String: Any]] = [
+            ["type": "session_meta", "payload": ["id": id]],
+            ["payload": ["type": "task_started", "turn_id": "current"]]
+        ]
+        var data = Data()
+        for event in events { data.append(try JSONSerialization.data(withJSONObject: event)); data.append(10) }
+        try data.write(to: root.appendingPathComponent("test.jsonl"))
+        let scanner = LogScanner(source: "codex", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        _ = await scanner.scan(now: now)
+        let active = await scanner.activeCodexSessionStates(now: now)
+        XCTAssertEqual(active[id], .running)
+    }
+
     func hook(_ event: String, tool: String = "", id: String = "q", turn: String = "t", second: Double = 0) -> [String: Any] {
         ["hook_event_name": event, "session_id": "s", "turn_id": turn,
          "tool_name": tool, "tool_use_id": id, "received_at": now.timeIntervalSince1970 + second]

@@ -232,6 +232,23 @@ actor LogScanner {
             .sorted { $0.value > $1.value }.prefix(limit).map(\.key)
     }
 
+    /// Preserve active sessions whose desktop IPC is temporarily unavailable.
+    /// A live response may replace only the fallback for the same session.
+    func activeCodexSessionStates(now: Date = Date()) -> [String: AIState] {
+        guard source == "codex" else { return [:] }
+        var result: [String: AIState] = [:]
+        func record(_ id: String, _ state: AIState) {
+            guard UUID(uuidString: id) != nil, state == .running || state == .awaitingInput else { return }
+            result[id] = max(result[id] ?? .unknown, state)
+        }
+        for (url, session) in sessions {
+            guard let id = sessionIDs[url], !hooks.hookedSessions.contains(id) else { continue }
+            record(id, session.visibleState(now: now))
+        }
+        for (owner, session) in hooks.owners { record(owner.session, session.visibleState(now: now)) }
+        return result
+    }
+
     private func pendingCodexRequests() -> [CodexPendingRequest] {
         var requests: [CodexPendingRequest] = []
         if source == "codex" {
@@ -239,13 +256,15 @@ actor LogScanner {
                 let log = sessions.first { sessionIDs[$0.key] == owner.session }?.value
                 for id in value.pendingRequests {
                     requests.append(.init(sessionID: owner.session, turnID: value.turnID, requestID: id,
-                        isQuestion: value.inputRequests.contains(id), context: log?.requestContexts[id], commandDigest: value.commandDigests[id]))
+                        isQuestion: value.inputRequests.contains(id), context: log?.requestContexts[id], commandDigest: value.commandDigests[id],
+                        isAsynchronous: value.asyncRequests.contains(id)))
                 }
             }
             for (url, value) in sessions where !hooks.hookedSessions.contains(sessionIDs[url] ?? "") && value.state == .awaitingInput {
                 for id in value.pendingRequests {
                     requests.append(.init(sessionID: sessionIDs[url] ?? "", turnID: value.turnID, requestID: id,
-                        isQuestion: value.inputRequests.contains(id), context: value.requestContexts[id]))
+                        isQuestion: value.inputRequests.contains(id), context: value.requestContexts[id],
+                        isAsynchronous: value.asyncRequests.contains(id)))
                 }
             }
             requests.sort { $0.id < $1.id }
