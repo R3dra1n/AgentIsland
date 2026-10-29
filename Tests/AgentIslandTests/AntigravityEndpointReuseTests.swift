@@ -47,4 +47,27 @@ final class AntigravityEndpointReuseTests: XCTestCase {
         XCTAssertEqual(discoveries, 1)
         XCTAssertEqual(validations, 0)
     }
+
+    func testPreparationReusesOnlyRevalidatedEndpoint() async throws {
+        let calls = Calls(), endpoint = endpoint
+        let result = try await AntigravityLocalTransport.endpointForPreparation(cached: endpoint,
+            discover: { await calls.discovered(); return endpoint },
+            revalidate: { value in XCTAssertEqual(value, endpoint); await calls.validated() })
+        XCTAssertEqual(result, endpoint)
+        let discoveries = await calls.discoveries, validations = await calls.validations
+        XCTAssertEqual(discoveries, 0)
+        XCTAssertEqual(validations, 1)
+    }
+
+    func testPreparationRediscoversAfterCachedEndpointFailsValidation() async throws {
+        let calls = Calls(), old = endpoint
+        let replacement = AntigravityLocalTransport.Endpoint(pid: 456, port: 5678, certificate: Data([4]))
+        let result = try await AntigravityLocalTransport.endpointForPreparation(cached: old,
+            discover: { await calls.discovered(); return replacement },
+            revalidate: { _ in await calls.validated(); throw FixtureError.rejected })
+        XCTAssertEqual(result, replacement)
+        let discoveries = await calls.discoveries, validations = await calls.validations
+        XCTAssertEqual(discoveries, 1)
+        XCTAssertEqual(validations, 1)
+    }
 }

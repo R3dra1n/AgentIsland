@@ -156,6 +156,23 @@ struct AntigravityLocalTransport {
         return try await discover()
     }
 
+    /// Preparing a question is read-only. If the previous local endpoint is
+    /// gone, discover a freshly authenticated and pinned endpoint instead.
+    static func endpointForPreparation(cached: Endpoint?,
+                                       discover: @Sendable () async throws -> Endpoint,
+                                       revalidate: @Sendable (Endpoint) async throws -> Void) async throws -> Endpoint {
+        if let cached {
+            do {
+                try await revalidate(cached)
+                try Task.checkCancellation()
+                return cached
+            } catch {
+                try Task.checkCancellation()
+            }
+        }
+        return try await discover()
+    }
+
     static func post(_ endpoint: Endpoint, method: String, data: Data) async throws -> Data {
         guard ["GetCascadeTrajectory", "HandleCascadeUserInteraction"].contains(method), data.count <= 64 * 1024 else { throw Failure.unsafe }
         try Task.checkCancellation()

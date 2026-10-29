@@ -29,6 +29,9 @@ enum AntigravityActionController {
     private static var activeWorker: Task<Bool, Never>?
     private static var preparationTasks: [String: Task<AntigravityPreparationResult, Never>] = [:]
     private static var preparationIDs: [String: UUID] = [:]
+    // Contains no credential or question; only retained in memory after the
+    // user has explicitly enabled local replies.
+    private static var cachedEndpoint: AntigravityLocalTransport.Endpoint?
 
     static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String) {
         preparationTasks.removeValue(forKey: sessionID)?.cancel()
@@ -50,9 +53,14 @@ enum AntigravityActionController {
             return
         }
         state.antigravitySessionFeedback[sessionID] = "正在验证此会话的问题…"
+        let previousEndpoint = cachedEndpoint
         let task = Task.detached(priority: .userInitiated) { () -> AntigravityPreparationResult in
             let endpoint: AntigravityLocalTransport.Endpoint
-            do { endpoint = try await AntigravityLocalTransport.discover() }
+            do {
+                endpoint = try await AntigravityLocalTransport.endpointForPreparation(cached: previousEndpoint,
+                    discover: { try await AntigravityLocalTransport.discover() },
+                    revalidate: { try AntigravityLocalTransport.revalidate($0) })
+            }
             catch { return .connectionUnavailable }
             let data: Data
             do {
@@ -77,9 +85,11 @@ enum AntigravityActionController {
                 return
             }
             guard case .ready(let prepared) = result else {
+                if case .queryFailed = result, cachedEndpoint == previousEndpoint { cachedEndpoint = nil }
                 state.antigravitySessionFeedback[sessionID] = result.failureMessage
                 return
             }
+            cachedEndpoint = prepared.endpoint
             state.antigravityPreparedQuestions[sessionID] = prepared
             state.antigravitySessionFeedback.removeValue(forKey: sessionID)
         }
@@ -206,6 +216,7 @@ enum AntigravityActionController {
 
     static func revokeConsent(state: AppState) {
         UserDefaults.standard.removeObject(forKey: consentKey)
+        cachedEndpoint = nil
         activeWorker?.cancel()
         for (id, task) in preparationTasks {
             task.cancel()

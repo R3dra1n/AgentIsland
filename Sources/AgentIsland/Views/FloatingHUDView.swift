@@ -426,6 +426,18 @@ struct ActionDetailPopover: View {
     
     @State private var customInput: String = ""
 
+    // Expand for normal questions and only scroll once the available screen
+    // height would be exceeded. Long wrapped lines get extra room.
+    private var detailHeight: CGFloat {
+        let lines = detail.components(separatedBy: "\n")
+        let estimated = lines.reduce(CGFloat(12)) { total, line in
+            let wraps = max(1, (line.count + 27) / 28)
+            return total + max(line.hasPrefix("   [") ? 28 : 18, CGFloat(wraps * 17)) + 4
+        }
+        let available = max(160, min(680, (NSScreen.main?.visibleFrame.height ?? 700) - 230))
+        return min(max(64, estimated), available)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -441,7 +453,7 @@ struct ActionDetailPopover: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(detail.components(separatedBy: "\n"), id: \.self) { line in
+                    ForEach(Array(detail.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                         if line.hasPrefix("   [") {
                             // Extract the number
                             let components = line.components(separatedBy: "] ")
@@ -451,7 +463,7 @@ struct ActionDetailPopover: View {
                                     Text(line)
                                         .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(.primary.opacity(0.85))
-                                        .lineLimit(3)
+                                        .fixedSize(horizontal: false, vertical: true)
                                     Spacer()
                                     if onSend != nil || onChoose != nil || showsDisabledActions {
                                     Button(action: {
@@ -482,7 +494,7 @@ struct ActionDetailPopover: View {
                 }
                 .padding(.vertical, 4)
             }
-            .frame(maxHeight: 250)
+            .frame(height: detailHeight)
             
             Divider()
             if onSend != nil && !supportsFreeText {
