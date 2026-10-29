@@ -37,6 +37,23 @@ final class AntigravityEndpointReuseTests: XCTestCase {
         XCTAssertLessThanOrEqual(peak, 4)
     }
 
+    func testOwnershipRequiresBothMatchingProcessAndPort() async throws {
+        let valid = try await AntigravityLocalTransport.ownershipMatches(pid: 12, port: 34,
+            readPID: { 12 }, readPorts: { [34] })
+        let wrongProcess = try await AntigravityLocalTransport.ownershipMatches(pid: 12, port: 34,
+            readPID: { 13 }, readPorts: { [34] })
+        let wrongPort = try await AntigravityLocalTransport.ownershipMatches(pid: 12, port: 34,
+            readPID: { 12 }, readPorts: { [35] })
+        XCTAssertTrue(valid)
+        XCTAssertFalse(wrongProcess)
+        XCTAssertFalse(wrongPort)
+        do {
+            _ = try await AntigravityLocalTransport.ownershipMatches(pid: 12, port: 34,
+                readPID: { throw FixtureError.rejected }, readPorts: { [34] })
+            XCTFail("An ownership lookup failure must not be treated as success")
+        } catch FixtureError.rejected { }
+    }
+
     func testPreparedEndpointIsRevalidatedWithoutRediscovery() async throws {
         let calls = Calls(), endpoint = endpoint
         let result = try await AntigravityLocalTransport.endpointForReply(prepared: endpoint,

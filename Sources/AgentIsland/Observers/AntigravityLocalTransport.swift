@@ -157,11 +157,22 @@ struct AntigravityLocalTransport {
 
     /// Reuse only the endpoint captured when this question was opened. Keep
     /// signature, process and port checks, and retain the original TLS pin.
-    static func revalidate(_ endpoint: Endpoint) throws {
+    static func revalidate(_ endpoint: Endpoint) async throws {
         let current = try server()
         guard current.pid == endpoint.pid else { throw Failure.unsafe }
-        try validateSignature(current.bundle)
-        guard try ports(pid: endpoint.pid).contains(endpoint.port) else { throw Failure.unsafe }
+        async let signature: Void = validateSignature(current.bundle)
+        async let listening: [Int] = ports(pid: endpoint.pid)
+        let (_, openPorts) = try await (signature, listening)
+        guard openPorts.contains(endpoint.port) else { throw Failure.unsafe }
+    }
+
+    static func ownershipMatches(pid: Int, port: Int,
+                                 readPID: @Sendable () async throws -> Int,
+                                 readPorts: @Sendable () async throws -> [Int]) async throws -> Bool {
+        async let actualPID = readPID()
+        async let openPorts = readPorts()
+        let (actual, ports) = try await (actualPID, openPorts)
+        return actual == pid && ports.contains(port)
     }
 
     static func endpointForReply(prepared: Endpoint?,
@@ -202,10 +213,14 @@ struct AntigravityLocalTransport {
     }
 
     private static func request(_ endpoint: Endpoint, method: String, data: Data, credential: String?) async throws -> (status: Int, body: Data) {
-        guard try serverPID() == endpoint.pid, try ports(pid: endpoint.pid).contains(endpoint.port) else { throw Failure.unsafe }
+        let check: @Sendable () async throws -> Bool = {
+            try await ownershipMatches(pid: endpoint.pid, port: endpoint.port,
+                readPID: { try serverPID() }, readPorts: { try ports(pid: endpoint.pid) })
+        }
+        guard try await check() else { throw Failure.unsafe }
         let result = try await PinnedLoopbackHTTP.post(port: endpoint.port, certificate: endpoint.certificate,
                                                         method: method, body: data, credential: credential)
-        guard try serverPID() == endpoint.pid, try ports(pid: endpoint.pid).contains(endpoint.port) else { throw Failure.unsafe }
+        guard try await check() else { throw Failure.unsafe }
         return result
     }
 }

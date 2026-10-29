@@ -187,6 +187,10 @@ public struct AISegmentView: View {
                    detail == item.actionDetail {
                     presentedSessionID = id; presentedIdentity = identity; presentedDetail = detail
                     appState.prepareAntigravityQuestion(forSession: id, expectedIdentity: identity, expectedDetail: detail)
+                    // The background validation may already be complete before
+                    // the popover exists. Bind it now instead of relying on a
+                    // later SwiftUI change notification to enable the buttons.
+                    presentedQuestion = appState.antigravityPreparedQuestions[id]?.question(matching: identity, detail: detail)
                 }
             }
         }

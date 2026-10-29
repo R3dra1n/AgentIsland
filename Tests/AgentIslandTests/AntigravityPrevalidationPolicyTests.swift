@@ -45,6 +45,9 @@ final class AntigravityPrevalidationPolicyTests: XCTestCase {
             question: "synthetic question", options: [], stepFingerprint: Data([1]))
         let endpoint = AntigravityLocalTransport.Endpoint(pid: 123, port: 456, certificate: Data([1]))
         let prepared = ["a": AntigravityPreparedQuestion(identity: id, detail: "synthetic question", question: question, endpoint: endpoint)]
+        XCTAssertEqual(prepared["a"]?.question(matching: id, detail: "synthetic question"), question)
+        XCTAssertNil(prepared["a"]?.question(matching: identity(2), detail: "synthetic question"))
+        XCTAssertNil(prepared["a"]?.question(matching: id, detail: "different question"))
         let same = AntigravityPrevalidationPolicy.candidates(enabled: true, consent: true,
             sessions: [session("a", identity: id)], inFlight: [], attempted: [:], prepared: prepared, limit: 2)
         XCTAssertTrue(same.isEmpty)

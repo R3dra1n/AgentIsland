@@ -6,6 +6,10 @@ struct AntigravityPreparedQuestion: Equatable, Sendable {
     let detail: String
     let question: AntigravityQuestion
     let endpoint: AntigravityLocalTransport.Endpoint
+
+    func question(matching identity: AntigravityPendingIdentity, detail: String) -> AntigravityQuestion? {
+        self.identity == identity && self.detail == detail ? question : nil
+    }
 }
 
 private enum AntigravityPreparationResult: Sendable {
@@ -37,6 +41,7 @@ enum AntigravityActionController {
     // Contains no credential or question; only retained in memory after the
     // user has explicitly enabled local replies.
     private static var cachedEndpoint: AntigravityLocalTransport.Endpoint?
+
 
     static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String, automatic: Bool = false) {
         let target = AntigravityPrevalidationTarget(identity: expectedIdentity, detail: expectedDetail)
@@ -79,7 +84,7 @@ enum AntigravityActionController {
             do {
                 endpoint = try await AntigravityLocalTransport.endpointForPreparation(cached: previousEndpoint,
                     discover: { try await AntigravityLocalTransport.discover() },
-                    revalidate: { try AntigravityLocalTransport.revalidate($0) })
+                    revalidate: { try await AntigravityLocalTransport.revalidate($0) })
             }
             catch { return .connectionUnavailable }
             let data: Data
@@ -246,7 +251,7 @@ enum AntigravityActionController {
                 do {
                     let endpoint = try await AntigravityLocalTransport.endpointForReply(prepared: capturedEndpoint,
                         discover: { try await AntigravityLocalTransport.discover() },
-                        revalidate: { try AntigravityLocalTransport.revalidate($0) })
+                        revalidate: { try await AntigravityLocalTransport.revalidate($0) })
                     let query = try JSONSerialization.data(withJSONObject: ["cascadeId": cascade.uuidString.lowercased()])
                     return try await AntigravityReplyWorkflow.run(cascade: cascade, detail: detail, selection: selection, expectedQuestion: expectedQuestion,
                         fetch: { try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query) },
