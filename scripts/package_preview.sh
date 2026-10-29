@@ -11,4 +11,8 @@ ARCHIVE="AgentIsland-macOS-${ARCH}-preview.zip"
 /usr/bin/ditto --norsrc --noextattr --noqtn -c -k --keepParent "$OUTPUT_DIR/AgentIsland.app" "dist/$ARCHIVE"
 cp docs/preview-install.md dist/INSTALL.md
 (cd dist && shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256")
-printf 'Developer preview (ad-hoc signed, not notarized): dist/%s\n' "$ARCHIVE"
+if [[ "${AGENTISLAND_SIGN_IDENTITY:--}" == "-" ]]; then
+    printf 'Developer preview (ad-hoc signed; notarization not performed): dist/%s\n' "$ARCHIVE"
+else
+    printf 'Developer preview (configured signing identity; notarization not performed): dist/%s\n' "$ARCHIVE"
+fi

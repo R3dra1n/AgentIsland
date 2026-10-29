@@ -1,8 +1,21 @@
 # AgentIsland 隔离预览包说明
 
-此包是尚未完成实机验收的开发测试包，不能作为正式版发布。应用为 ad-hoc 签名，尚未公证；最低 macOS 14。`arm64` 包仅适用于 Apple Silicon；通用包仍需在两种架构上分别验证。
+此包是尚未完成实机验收的开发测试包，不能作为正式版发布。默认构建使用 ad-hoc 签名，打包脚本不会自动执行公证；最低 macOS 14。`arm64` 包仅适用于 Apple Silicon；通用包仍需在两种架构上分别验证。
 
-1. 校验同目录 SHA256，将应用复制到测试环境的 Applications。不要覆盖正在使用的版本。
+## 获取与校验
+
+打包后，应用 ZIP、同名 `.sha256` 校验文件和 `INSTALL.md` 是三个并列文件；ZIP 中只有 App。若从发布页获取预览，请将这三个文件下载到同一目录，并选择适合自己芯片的 ZIP。以 Apple Silicon 包放在「下载」目录为例，在终端运行：
+
+```sh
+cd ~/Downloads
+shasum -a 256 -c AgentIsland-macOS-arm64-preview.zip.sha256
+```
+
+其他架构的包请将第二行文件名换成对应 ZIP 的 `.sha256` 文件名。显示 `OK` 表示 ZIP 与该校验文件一致；校验值本身仍需从可信发布渠道获取。
+
+## 安装
+
+1. 校验同目录 SHA256，双击解压 ZIP，再将其中的 `AgentIsland.app` 复制到测试环境的 Applications。不要覆盖正在使用的版本。
 2. 如系统提示无法验证开发者，确认文件来源后参考 [Apple 打开安全设置说明](https://support.apple.com/en-us/102445)，不要全局关闭 Gatekeeper。
 3. 按使用的助手授予所需辅助功能权限。测试与正式版本可能需要各自授权；重新签名后权限可能需要重新核对。
 4. Codex 通信使用原生 IPC；Codex／Antigravity 的可选 Hook 提供原生配置入口和记录器，不要求用户安装 Python。配置前仍需确定目标助手版本的 `hooks.json` 路径。
@@ -20,7 +33,7 @@ Codex 使用版本相关的非公开 IPC，断线或协议变化时需回原应�
 
 1. 若曾配置可选 Hook，先在应用设置中选择对应的「移除 Hook」并选择之前配置的 `hooks.json`；重复此步骤处理每个曾配置的助手。确认其他 Hook 仍在，保留备份直到核对完成。
 2. 退出 AgentIsland，再将安装的 `AgentIsland.app` 移到废纸篓。若曾授予辅助功能权限，可在 macOS「隐私与安全性 → 辅助功能」中移除该应用的授权记录。
-3. 若不再需要 AgentIsland 的本机事件记录、锁文件和版本化 Hook 工具，可在 Finder「前往文件夹」打开 `~/Library/Application Support/AgentIsland`，检查后删除该目录。确认其他配置已不再引用其中的工具；配置文件旁的 `*.agentisland-backup-*` 需自行决定是否保留。
-4. 如需清除界面偏好，可检查并删除 `~/Library/Preferences/com.antigravity.AgentIsland.plist`。旧版目录可能独立存在，请先确认用途。
+3. 若不再需要 AgentIsland 的本机事件记录、锁文件和版本化 Hook 工具，可在 Finder「前往文件夹」打开 `~/Library/Application Support/AgentIsland`，检查后删除该目录。确认其他配置已不再引用其中的工具；配置文件旁的 `*.agentisland-backup-*` 需自行决定是否保留。所选 Hook 配置文件所在目录还可能留下隐藏的 `.agentisland-lock-<哈希>` 文件；只有确认所有 AgentIsland Hook 安装或移除操作均已结束后，才可自行选择删除，进行中的操作不要删除锁文件。
+4. 如需清除全部 AgentIsland 界面偏好和后台回复授权，确认应用已退出后可在终端运行 `defaults delete com.antigravity.AgentIsland`；若该偏好域不存在，命令可能提示未找到。此操作会删除该域的全部设置，请先确认需要清除。旧版及隔离预览版可能使用独立目录或偏好域，请先确认用途。
 
 不要删除 Codex、Antigravity 或其他助手自身的对话、配置和数据目录。以上删除步骤不可自动恢复，请先保留需要的备份。
