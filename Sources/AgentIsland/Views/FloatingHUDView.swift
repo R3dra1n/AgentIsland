@@ -415,6 +415,11 @@ public struct AISegmentView: View {
     }
 }
 
+private struct ActionDetailContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 /// A popover view showing the detailed action context for an AI awaiting input
 struct ActionDetailPopover: View {
     let detail: String
@@ -425,17 +430,13 @@ struct ActionDetailPopover: View {
     var onSend: ((String, String?) -> Void)?
     
     @State private var customInput: String = ""
+    @State private var measuredContentHeight: CGFloat = 0
 
     // Expand for normal questions and only scroll once the available screen
     // height would be exceeded. Long wrapped lines get extra room.
     private var detailHeight: CGFloat {
-        let lines = detail.components(separatedBy: "\n")
-        let estimated = lines.reduce(CGFloat(12)) { total, line in
-            let wraps = max(1, (line.count + 27) / 28)
-            return total + max(line.hasPrefix("   [") ? 28 : 18, CGFloat(wraps * 17)) + 4
-        }
         let available = max(160, min(680, (NSScreen.main?.visibleFrame.height ?? 700) - 230))
-        return min(max(64, estimated), available)
+        return min(max(48, measuredContentHeight > 0 ? measuredContentHeight : 120), available)
     }
 
     var body: some View {
@@ -493,8 +494,18 @@ struct ActionDetailPopover: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: ActionDetailContentHeightKey.self, value: geometry.size.height)
+                })
             }
             .frame(height: detailHeight)
+            .onPreferenceChange(ActionDetailContentHeightKey.self) { height in
+                guard height.isFinite, height > 0, abs(height - measuredContentHeight) >= 1 else { return }
+                measuredContentHeight = height
+            }
+            .onChange(of: detail) { _, _ in measuredContentHeight = 0 }
             
             Divider()
             if onSend != nil && !supportsFreeText {

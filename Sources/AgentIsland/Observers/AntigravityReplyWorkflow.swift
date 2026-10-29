@@ -9,8 +9,13 @@ enum AntigravityReplyWorkflow {
                     fetch: @Sendable () async throws -> Data,
                     stillCurrent: @Sendable () async -> Bool,
                     submit: @Sendable (Data) async throws -> Void) async throws -> Bool {
-        let first = try AntigravityInteractionParser.parse(await fetch(), cascadeID: cascade)
-        guard first.matchesDisplayedDetail(detail), expectedQuestion == nil || first == expectedQuestion else { return false }
+        // A question opened in the session UI was already fetched and pinned.
+        // Fetch it once again below immediately before submission. Legacy calls
+        // without a pinned question still perform both reads.
+        let first: AntigravityQuestion
+        if let expectedQuestion { first = expectedQuestion }
+        else { first = try AntigravityInteractionParser.parse(await fetch(), cascadeID: cascade) }
+        guard first.cascadeID == cascade, first.matchesDisplayedDetail(detail) else { return false }
         let answer: AntigravityQuestion.Answer
         switch selection {
         case .text(let value): answer = .text(value)

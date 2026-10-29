@@ -96,12 +96,14 @@ final class AntigravityBoundQuestionTests: XCTestCase {
         XCTAssertFalse(wrongResult)
         XCTAssertTrue(wronglySubmitted.isEmpty)
 
-        let correctSession = SimulatedServer([data, data])
+        let correctSession = SimulatedServer([data])
         let result = try await AntigravityReplyWorkflow.run(cascade: cascadeB, detail: detail,
             selection: .option(2), expectedQuestion: boundB,
             fetch: { try await correctSession.fetch() }, stillCurrent: { true }, submit: { await correctSession.submit($0) })
         let submitted = await correctSession.submitted
+        let fetches = await correctSession.fetchCount
         XCTAssertTrue(result)
+        XCTAssertEqual(fetches, 1)
         XCTAssertEqual(submitted.count, 1)
         let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(submitted.first)) as? [String: Any])
         XCTAssertEqual(payload["cascadeId"] as? String, cascadeB.uuidString.lowercased())
