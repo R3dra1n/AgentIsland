@@ -297,6 +297,19 @@ public struct PopoverContentView: View {
                 .fixedSize()
             }
 
+            HStack {
+                Text("Antigravity 提前验证问题")
+                    .font(.system(size: 12, weight: .medium))
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { appState.antigravityPrevalidationEnabled },
+                    set: { AntigravityActionController.setPrevalidation($0, state: appState) }
+                ))
+                .toggleStyle(.appleNative)
+                .labelsHidden()
+                .help("开启后会在打开面板前查询等待的问题，不会自动回复。")
+            }
+
             Button("撤销 Antigravity 后台回复授权") { AntigravityActionController.revokeConsent(state: appState) }
                 .font(.system(size: 11))
         }

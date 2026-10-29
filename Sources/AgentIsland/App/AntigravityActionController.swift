@@ -26,21 +26,39 @@ private enum AntigravityPreparationResult: Sendable {
 @MainActor
 enum AntigravityActionController {
     private static let consentKey = "antigravityLocalReplyConsent"
+    private static let prevalidationKey = "antigravityPrevalidationEnabled"
     private static var activeWorker: Task<Bool, Never>?
     private static var preparationTasks: [String: Task<AntigravityPreparationResult, Never>] = [:]
     private static var preparationIDs: [String: UUID] = [:]
+    private static var preparationTargets: [String: AntigravityPrevalidationTarget] = [:]
+    private static var automaticTasks: Set<String> = []
+    private static var automaticPrepared: Set<String> = []
+    private static var automaticAttempts: [String: AntigravityPrevalidationTarget] = [:]
     // Contains no credential or question; only retained in memory after the
     // user has explicitly enabled local replies.
     private static var cachedEndpoint: AntigravityLocalTransport.Endpoint?
 
-    static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String) {
+    static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String, automatic: Bool = false) {
+        let target = AntigravityPrevalidationTarget(identity: expectedIdentity, detail: expectedDetail)
+        if let ready = state.antigravityPreparedQuestions[sessionID], ready.identity == expectedIdentity, ready.detail == expectedDetail {
+            if !automatic { automaticPrepared.remove(sessionID) }
+            return
+        }
+        if preparationTasks[sessionID] != nil, preparationTargets[sessionID] == target {
+            if !automatic { automaticTasks.remove(sessionID) }
+            return
+        }
         preparationTasks.removeValue(forKey: sessionID)?.cancel()
+        preparationTargets.removeValue(forKey: sessionID)
+        automaticTasks.remove(sessionID)
+        automaticPrepared.remove(sessionID)
         state.antigravityPreparedQuestions.removeValue(forKey: sessionID)
         let requestID = UUID()
         preparationIDs[sessionID] = requestID
         guard let current = state.antigravityObserver.sessions.first(where: { $0.id == sessionID }),
               current.state == .awaitingInput, current.pendingIdentity == expectedIdentity, current.actionDetail == expectedDetail,
-              let cascade = cascadeID(for: expectedIdentity.transcript), consent() else {
+              let cascade = cascadeID(for: expectedIdentity.transcript),
+              (automatic ? (state.antigravityPrevalidationEnabled && UserDefaults.standard.bool(forKey: consentKey)) : consent()) else {
             state.antigravitySessionFeedback[sessionID] = "问题已变化或尚未授权，请在原应用确认"
             return
         }
@@ -48,11 +66,13 @@ enum AntigravityActionController {
         guard let afterConsent = state.antigravityObserver.sessions.first(where: { $0.id == sessionID }),
               afterConsent.state == .awaitingInput, afterConsent.pendingIdentity == expectedIdentity,
               afterConsent.actionDetail == expectedDetail, preparationIDs[sessionID] == requestID,
-              UserDefaults.standard.bool(forKey: consentKey) else {
+              UserDefaults.standard.bool(forKey: consentKey), (!automatic || state.antigravityPrevalidationEnabled) else {
             state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开"
             return
         }
         state.antigravitySessionFeedback[sessionID] = "正在验证此会话的问题…"
+        preparationTargets[sessionID] = target
+        if automatic { automaticTasks.insert(sessionID) }
         let previousEndpoint = cachedEndpoint
         let task = Task.detached(priority: .userInitiated) { () -> AntigravityPreparationResult in
             let endpoint: AntigravityLocalTransport.Endpoint
@@ -78,9 +98,13 @@ enum AntigravityActionController {
             let result = await task.value
             guard preparationIDs[sessionID] == requestID else { return }
             preparationTasks.removeValue(forKey: sessionID)
+            preparationTargets.removeValue(forKey: sessionID)
+            let wasAutomatic = automaticTasks.remove(sessionID) != nil
+            defer { refreshPrevalidation(state: state) }
             let latest = state.antigravityObserver.sessions.first { $0.id == sessionID }
             guard latest?.state == .awaitingInput, latest?.pendingIdentity == expectedIdentity,
-                  latest?.actionDetail == expectedDetail, UserDefaults.standard.bool(forKey: consentKey) else {
+                  latest?.actionDetail == expectedDetail, UserDefaults.standard.bool(forKey: consentKey),
+                  (!wasAutomatic || state.antigravityPrevalidationEnabled) else {
                 state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开后确认"
                 return
             }
@@ -91,6 +115,7 @@ enum AntigravityActionController {
             }
             cachedEndpoint = prepared.endpoint
             state.antigravityPreparedQuestions[sessionID] = prepared
+            if wasAutomatic { automaticPrepared.insert(sessionID) }
             state.antigravitySessionFeedback.removeValue(forKey: sessionID)
         }
     }
@@ -98,8 +123,67 @@ enum AntigravityActionController {
     static func discard(state: AppState, sessionID: String) {
         preparationTasks.removeValue(forKey: sessionID)?.cancel()
         preparationIDs.removeValue(forKey: sessionID)
+        preparationTargets.removeValue(forKey: sessionID)
+        automaticTasks.remove(sessionID)
+        automaticPrepared.remove(sessionID)
         state.antigravityPreparedQuestions.removeValue(forKey: sessionID)
         state.antigravitySessionFeedback.removeValue(forKey: sessionID)
+    }
+
+    static func setPrevalidation(_ enabled: Bool, state: AppState) {
+        if enabled {
+            guard consent() else { return }
+            let alert = NSAlert()
+            alert.messageText = "启用 Antigravity 提前验证？"
+            alert.informativeText = "检测到待回答问题时，AgentIsland 会在你打开面板前读取 Antigravity 本机进程的临时认证信息并查询对应问题，以减少等待。认证信息不会保存或上传；问题暂存在内存，不会自动发送回复。你可随时关闭此功能。"
+            alert.addButton(withTitle: "启用")
+            alert.addButton(withTitle: "取消")
+            guard alert.runModal() == .alertFirstButtonReturn, UserDefaults.standard.bool(forKey: consentKey) else { return }
+            UserDefaults.standard.set(true, forKey: prevalidationKey)
+            state.antigravityPrevalidationEnabled = true
+            refreshPrevalidation(state: state)
+        } else {
+            UserDefaults.standard.set(false, forKey: prevalidationKey)
+            state.antigravityPrevalidationEnabled = false
+            stopAutomaticPrevalidation(state: state)
+        }
+    }
+
+    private static func stopAutomaticPrevalidation(state: AppState) {
+        for id in Array(automaticTasks.union(automaticPrepared)) { discard(state: state, sessionID: id) }
+        automaticAttempts.removeAll()
+    }
+
+    /// Never auto-send. Skip ambiguous sessions and bound concurrent reads.
+    static func refreshPrevalidation(state: AppState) {
+        let sessions = state.antigravityObserver.sessions
+        let targets = Dictionary(uniqueKeysWithValues: sessions.compactMap { session in
+            AntigravityPrevalidationPolicy.target(for: session).map { (session.id, $0) }
+        })
+        for id in Array(automaticAttempts.keys) where automaticAttempts[id] != targets[id] {
+            automaticAttempts.removeValue(forKey: id)
+        }
+        for id in Array(preparationTargets.keys) where preparationTargets[id] != targets[id] {
+            discard(state: state, sessionID: id)
+        }
+        for id in Array(state.antigravityPreparedQuestions.keys) {
+            guard let prepared = state.antigravityPreparedQuestions[id] else { continue }
+            if targets[id] != AntigravityPrevalidationTarget(identity: prepared.identity, detail: prepared.detail) {
+                discard(state: state, sessionID: id)
+            }
+        }
+        guard state.antigravityPrevalidationEnabled, state.antigravityEnabled,
+              UserDefaults.standard.bool(forKey: consentKey), UserDefaults.standard.bool(forKey: prevalidationKey) else {
+            stopAutomaticPrevalidation(state: state)
+            return
+        }
+        let candidates = AntigravityPrevalidationPolicy.candidates(enabled: true, consent: true, sessions: sessions,
+            inFlight: Set(preparationTasks.keys), attempted: automaticAttempts, prepared: state.antigravityPreparedQuestions,
+            limit: max(0, 2 - automaticTasks.count))
+        for (id, target) in candidates {
+            automaticAttempts[id] = target
+            prepare(state: state, sessionID: id, expectedIdentity: target.identity, expectedDetail: target.detail, automatic: true)
+        }
     }
 
     static func submit(_ selection: AntigravityReplyWorkflow.Selection, state: AppState, sessionID: String? = nil,
@@ -216,6 +300,8 @@ enum AntigravityActionController {
 
     static func revokeConsent(state: AppState) {
         UserDefaults.standard.removeObject(forKey: consentKey)
+        UserDefaults.standard.removeObject(forKey: prevalidationKey)
+        state.antigravityPrevalidationEnabled = false
         cachedEndpoint = nil
         activeWorker?.cancel()
         for (id, task) in preparationTasks {
@@ -224,6 +310,10 @@ enum AntigravityActionController {
         }
         preparationTasks.removeAll()
         preparationIDs.removeAll()
+        preparationTargets.removeAll()
+        automaticTasks.removeAll()
+        automaticPrepared.removeAll()
+        automaticAttempts.removeAll()
         state.antigravityPreparedQuestions.removeAll()
     }
 }

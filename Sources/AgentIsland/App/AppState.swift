@@ -108,6 +108,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published public var antigravityActionInFlight = false
     @Published var antigravitySessionFeedback: [String: String] = [:]
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
+    @Published var antigravityPrevalidationEnabled = false
 
     @Published public var claudeState: AIState = .idle
     @Published public var claudeDescription: String = "待命中"
@@ -199,6 +200,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
 
     public init() {
         // Load settings
+        self.antigravityPrevalidationEnabled = UserDefaults.standard.bool(forKey: "antigravityPrevalidationEnabled") && UserDefaults.standard.bool(forKey: "antigravityLocalReplyConsent")
         if UserDefaults.standard.object(forKey: "isHUDEnabled") != nil {
             self.isHUDEnabled = UserDefaults.standard.bool(forKey: "isHUDEnabled")
         }
