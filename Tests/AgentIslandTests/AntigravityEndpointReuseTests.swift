@@ -13,6 +13,30 @@ final class AntigravityEndpointReuseTests: XCTestCase {
     private enum FixtureError: Error { case rejected }
     private let endpoint = AntigravityLocalTransport.Endpoint(pid: 123, port: 1234, certificate: Data([1, 2, 3]))
 
+    private actor ProbeTracker {
+        var active = 0
+        var peak = 0
+        var checked: Set<Int> = []
+        func start(_ port: Int) { active += 1; peak = max(peak, active); checked.insert(port) }
+        func finish() { active -= 1 }
+    }
+
+    func testPortProbesAreBoundedAndRetainAllMatches() async {
+        let tracker = ProbeTracker()
+        let matches = await AntigravityLocalTransport.probeEndpoints(ports: Array(1...7)) { port in
+            await tracker.start(port)
+            try? await Task.sleep(nanoseconds: 30_000_000)
+            await tracker.finish()
+            guard port == 2 || port == 6 else { return nil }
+            return .init(pid: 123, port: port, certificate: Data([1]))
+        }
+        let checked = await tracker.checked, peak = await tracker.peak
+        XCTAssertEqual(checked, Set(1...7))
+        XCTAssertEqual(Set(matches.map(\.port)), Set([2, 6]))
+        XCTAssertGreaterThan(peak, 1)
+        XCTAssertLessThanOrEqual(peak, 4)
+    }
+
     func testPreparedEndpointIsRevalidatedWithoutRediscovery() async throws {
         let calls = Calls(), endpoint = endpoint
         let result = try await AntigravityLocalTransport.endpointForReply(prepared: endpoint,

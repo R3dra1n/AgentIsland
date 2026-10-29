@@ -124,17 +124,35 @@ struct AntigravityLocalTransport {
         let current = try server()
         try validateSignature(current.bundle)
         let pid = current.pid
-        var candidates: [Endpoint] = []
-        for port in try ports(pid: pid) {
-            try Task.checkCancellation()
-            guard let cert = try? certificate(pid: pid, port: port) else { continue }
+        let candidates = await probeEndpoints(ports: try ports(pid: pid)) { port in
+            guard !Task.isCancelled, let cert = try? certificate(pid: pid, port: port) else { return nil }
             let endpoint = Endpoint(pid: pid, port: port, certificate: cert)
             if let result = try? await request(endpoint, method: "Heartbeat", data: Data("{}".utf8), credential: nil), result.status == 401 {
-                candidates.append(endpoint)
+                return endpoint
             }
+            return nil
         }
+        try Task.checkCancellation()
         guard candidates.count == 1 else { throw Failure.unavailable }
         return candidates[0]
+    }
+
+    /// Probe a small number of ports concurrently but retain every result, so
+    /// discovery still rejects ambiguous multiple matching endpoints.
+    static func probeEndpoints(ports: [Int], check: @escaping @Sendable (Int) async -> Endpoint?) async -> [Endpoint] {
+        await withTaskGroup(of: Endpoint?.self, returning: [Endpoint].self) { group in
+            var remaining = ports.makeIterator()
+            for _ in 0..<min(4, ports.count) {
+                if let port = remaining.next() { group.addTask { await check(port) } }
+            }
+            var result: [Endpoint] = []
+            while let candidate = await group.next() {
+                if let candidate { result.append(candidate) }
+                if Task.isCancelled { group.cancelAll(); break }
+                if let port = remaining.next() { group.addTask { await check(port) } }
+            }
+            return result
+        }
     }
 
     /// Reuse only the endpoint captured when this question was opened. Keep
