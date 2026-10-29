@@ -1,36 +1,139 @@
 import AppKit
 import Foundation
 
+struct AntigravityPreparedQuestion: Equatable, Sendable {
+    let identity: AntigravityPendingIdentity
+    let detail: String
+    let question: AntigravityQuestion
+}
+
 @MainActor
 enum AntigravityActionController {
     private static let consentKey = "antigravityLocalReplyConsent"
     private static var activeWorker: Task<Bool, Never>?
+    private static var preparationTasks: [String: Task<AntigravityPreparedQuestion?, Never>] = [:]
+    private static var preparationIDs: [String: UUID] = [:]
 
-    static func submit(_ selection: AntigravityReplyWorkflow.Selection, state: AppState) {
-        guard !state.antigravityActionInFlight else { return }
-        guard let identity = state.antigravityObserver.pendingIdentity else {
-            state.antigravityDescription = "问题身份不明确，请在 Antigravity 中回答"
+    static func prepare(state: AppState, sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String) {
+        preparationTasks.removeValue(forKey: sessionID)?.cancel()
+        state.antigravityPreparedQuestions.removeValue(forKey: sessionID)
+        let requestID = UUID()
+        preparationIDs[sessionID] = requestID
+        guard let current = state.antigravityObserver.sessions.first(where: { $0.id == sessionID }),
+              current.state == .awaitingInput, current.pendingIdentity == expectedIdentity, current.actionDetail == expectedDetail,
+              let cascade = cascadeID(for: expectedIdentity.transcript), consent() else {
+            state.antigravitySessionFeedback[sessionID] = "问题已变化或尚未授权，请在原应用确认"
             return
         }
-        guard let detail = state.antigravityObserver.actionDetail,
-              let cascade = cascadeID(for: identity.transcript) else {
-            state.antigravityDescription = "问题详情或会话标识不可用，请在 Antigravity 中回答"
+        // The authorization dialog can run a nested event loop; check again.
+        guard let afterConsent = state.antigravityObserver.sessions.first(where: { $0.id == sessionID }),
+              afterConsent.state == .awaitingInput, afterConsent.pendingIdentity == expectedIdentity,
+              afterConsent.actionDetail == expectedDetail, preparationIDs[sessionID] == requestID,
+              UserDefaults.standard.bool(forKey: consentKey) else {
+            state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开"
             return
+        }
+        state.antigravitySessionFeedback[sessionID] = "正在验证此会话的问题…"
+        let task = Task.detached(priority: .userInitiated) { () -> AntigravityPreparedQuestion? in
+            do {
+                let endpoint = try await AntigravityLocalTransport.discover()
+                let query = try JSONSerialization.data(withJSONObject: ["cascadeId": cascade.uuidString.lowercased()])
+                let data = try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query)
+                let question = try AntigravityInteractionParser.parse(data, cascadeID: cascade)
+                try Task.checkCancellation()
+                guard question.matchesDisplayedDetail(expectedDetail) else { return nil }
+                return AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question)
+            } catch { return nil }
+        }
+        preparationTasks[sessionID] = task
+        Task {
+            let prepared = await task.value
+            guard preparationIDs[sessionID] == requestID else { return }
+            preparationTasks.removeValue(forKey: sessionID)
+            let latest = state.antigravityObserver.sessions.first { $0.id == sessionID }
+            guard let prepared, latest?.state == .awaitingInput, latest?.pendingIdentity == expectedIdentity,
+                  latest?.actionDetail == expectedDetail, UserDefaults.standard.bool(forKey: consentKey) else {
+                state.antigravitySessionFeedback[sessionID] = "无法验证问题，请在 Antigravity 中回答"
+                return
+            }
+            state.antigravityPreparedQuestions[sessionID] = prepared
+            state.antigravitySessionFeedback.removeValue(forKey: sessionID)
+        }
+    }
+
+    static func discard(state: AppState, sessionID: String) {
+        preparationTasks.removeValue(forKey: sessionID)?.cancel()
+        preparationIDs.removeValue(forKey: sessionID)
+        state.antigravityPreparedQuestions.removeValue(forKey: sessionID)
+        state.antigravitySessionFeedback.removeValue(forKey: sessionID)
+    }
+
+    static func submit(_ selection: AntigravityReplyWorkflow.Selection, state: AppState, sessionID: String? = nil,
+                       expectedIdentity: AntigravityPendingIdentity? = nil, expectedDetail: String? = nil,
+                       expectedQuestion: AntigravityQuestion? = nil) {
+        func feedback(_ message: String) {
+            if let sessionID { state.antigravitySessionFeedback[sessionID] = message }
+            else { state.antigravityDescription = message }
+        }
+        guard !state.antigravityActionInFlight else {
+            feedback("另一条回复正在处理，请稍候")
+            return
+        }
+        let selected = sessionID.flatMap { id in state.antigravityObserver.sessions.first { $0.id == id } }
+        if sessionID != nil, selected == nil {
+            feedback("会话已变化，请在 Antigravity 中确认")
+            return
+        }
+        if let selected, selected.state != .awaitingInput {
+            feedback("此会话不再等待回复，请在 Antigravity 中确认")
+            return
+        }
+        let identity = sessionID == nil ? state.antigravityObserver.pendingIdentity : selected?.pendingIdentity
+        let detail = sessionID == nil ? state.antigravityObserver.actionDetail : selected?.actionDetail
+        guard let identity else {
+            feedback("问题身份不明确，请在 Antigravity 中回答")
+            return
+        }
+        guard let detail,
+              let cascade = cascadeID(for: identity.transcript) else {
+            feedback("问题详情或会话标识不可用，请在 Antigravity 中回答")
+            return
+        }
+        if let sessionID {
+            guard identity == expectedIdentity, detail == expectedDetail, let expectedQuestion,
+                  state.antigravityPreparedQuestions[sessionID] == AntigravityPreparedQuestion(identity: identity, detail: detail, question: expectedQuestion) else {
+                feedback("问题已变化，请重新打开后确认")
+                return
+            }
         }
         guard consent() else { return }
+        if let sessionID {
+            let current = state.antigravityObserver.sessions.first { $0.id == sessionID }
+            guard current?.state == .awaitingInput, current?.pendingIdentity == identity, current?.actionDetail == detail,
+                  UserDefaults.standard.bool(forKey: consentKey), let expectedQuestion,
+                  state.antigravityPreparedQuestions[sessionID] == AntigravityPreparedQuestion(identity: identity, detail: detail, question: expectedQuestion) else {
+                feedback("问题已变化，请重新打开后确认")
+                return
+            }
+        }
         state.antigravityActionInFlight = true
-        state.antigravityDescription = "正在验证 Antigravity 问题…"
+        feedback("正在验证 Antigravity 问题…")
         let worker = Task.detached(priority: .userInitiated) { () -> Bool in
                 do {
                     let endpoint = try await AntigravityLocalTransport.discover()
                     let query = try JSONSerialization.data(withJSONObject: ["cascadeId": cascade.uuidString.lowercased()])
-                    return try await AntigravityReplyWorkflow.run(cascade: cascade, detail: detail, selection: selection,
+                    return try await AntigravityReplyWorkflow.run(cascade: cascade, detail: detail, selection: selection, expectedQuestion: expectedQuestion,
                         fetch: { try await AntigravityLocalTransport.post(endpoint, method: "GetCascadeTrajectory", data: query) },
                         stillCurrent: {
                             await MainActor.run {
-                                state.antigravityObserver.pendingIdentity == identity &&
-                                state.antigravityObserver.actionDetail == detail &&
-                                UserDefaults.standard.bool(forKey: consentKey)
+                                let sameTarget: Bool
+                                if let sessionID {
+                                    let current = state.antigravityObserver.sessions.first { $0.id == sessionID }
+                                    sameTarget = current?.state == .awaitingInput && current?.pendingIdentity == identity && current?.actionDetail == detail
+                                } else {
+                                    sameTarget = state.antigravityObserver.pendingIdentity == identity && state.antigravityObserver.actionDetail == detail
+                                }
+                                return sameTarget && UserDefaults.standard.bool(forKey: consentKey)
                             }
                         },
                         submit: { payload in
@@ -43,9 +146,8 @@ enum AntigravityActionController {
             let result = await worker.value
             activeWorker = nil
             state.antigravityActionInFlight = false
-            state.antigravityDescription = result
-                ? "已发送，等待 Antigravity 状态更新"
-                : "未能确认送达，请在 Antigravity 中检查后再操作"
+            if let sessionID { state.antigravityPreparedQuestions.removeValue(forKey: sessionID) }
+            feedback(result ? "已发送，等待 Antigravity 状态更新" : "未能确认送达，请在 Antigravity 中检查后再操作")
         }
     }
 
@@ -70,8 +172,15 @@ enum AntigravityActionController {
         return true
     }
 
-    static func revokeConsent() {
+    static func revokeConsent(state: AppState) {
         UserDefaults.standard.removeObject(forKey: consentKey)
         activeWorker?.cancel()
+        for (id, task) in preparationTasks {
+            task.cancel()
+            state.antigravitySessionFeedback[id] = "已撤销后台回复授权"
+        }
+        preparationTasks.removeAll()
+        preparationIDs.removeAll()
+        state.antigravityPreparedQuestions.removeAll()
     }
 }

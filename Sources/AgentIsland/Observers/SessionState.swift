@@ -339,6 +339,25 @@ struct AntigravityPendingIdentity: Equatable, Sendable {
     let transcript: URL
     let fileID: UInt64
     let changedAt: Date
+    let requestID: String?
+
+    init(transcript: URL, fileID: UInt64, changedAt: Date, requestID: String? = nil) {
+        self.transcript = transcript
+        self.fileID = fileID
+        self.changedAt = changedAt
+        self.requestID = requestID
+    }
+}
+
+/// A session ID is an opaque stable digest, never a title or a local path.
+/// Hook-only sessions can be displayed but cannot be replied to here.
+struct AntigravitySessionSnapshot: Identifiable, Equatable, Sendable {
+    let id: String
+    let state: AIState
+    let description: String
+    let actionDetail: String?
+    let pendingIdentity: AntigravityPendingIdentity?
+    let lastActiveDate: Date?
 }
 
 struct ObserverSnapshot: Sendable {
@@ -350,6 +369,7 @@ struct ObserverSnapshot: Sendable {
     var codexRequests: [CodexPendingRequest] = []
     var antigravityPendingSessions: Int = 0
     var antigravityPendingIdentity: AntigravityPendingIdentity?
+    var antigravitySessions: [AntigravitySessionSnapshot] = []
 }
 
 /// Keeps incomplete UTF-8/JSON records across reads. All offsets belong to this reader.

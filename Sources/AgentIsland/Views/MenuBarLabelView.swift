@@ -19,7 +19,13 @@ public struct MenuBarLabelView: View {
         }
         var items: [Item] = []
         for obs in appState.displayedObservers {
-            items.append(Item(id: obs.id, state: obs.state))
+            // Keep one aggregate Antigravity icon in the narrow menu bar;
+            // the HUD itself shows its sessions as separate rows.
+            if obs.icon == "antigravity", let index = items.firstIndex(where: { $0.id == "antigravity" }) {
+                items[index] = Item(id: "antigravity", state: max(items[index].state, obs.state))
+            } else {
+                items.append(Item(id: obs.icon == "antigravity" ? "antigravity" : obs.id, state: obs.state))
+            }
         }
         
         if items.isEmpty {

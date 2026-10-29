@@ -106,6 +106,8 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published public var antigravityNeedsAck: Bool = false
     @Published public var antigravityActionDetail: String?
     @Published public var antigravityActionInFlight = false
+    @Published var antigravitySessionFeedback: [String: String] = [:]
+    @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
 
     @Published public var claudeState: AIState = .idle
     @Published public var claudeDescription: String = "待命中"
@@ -154,11 +156,34 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         return list
     }
 
-    public var displayedObservers: [AIObserverItem] {
-        let list = allObservers.filter { $0.isEnabled }
-        if testModeActive {
-            return list
+    static let antigravitySessionPrefix = "antigravity-session:"
+    private var antigravitySessionLabels: [String: Int] = [:]
+
+    static func expandAntigravitySessions(_ providers: [AIObserverItem], sessions: [AntigravitySessionSnapshot],
+                                          feedback: [String: String], labels: [String: Int]) -> [AIObserverItem] {
+        providers.flatMap { provider in
+            guard provider.id == "antigravity", !sessions.isEmpty else { return [provider] }
+            return sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session in
+                let label = labels[session.id] ?? 0
+                return AIObserverItem(id: antigravitySessionPrefix + session.id, name: "Antigravity · 会话 \(label)",
+                    icon: "antigravity", isEnabled: provider.isEnabled, state: session.state,
+                    description: session.state == .awaitingInput ? (feedback[session.id] ?? session.description) : session.description,
+                    actionDetail: session.actionDetail)
+            }
         }
+    }
+
+    public var displayedObservers: [AIObserverItem] {
+        let providers = allObservers.filter { $0.isEnabled }
+        if testModeActive {
+            return providers
+        }
+        let sessions = antigravityObserver.sessions
+        for session in sessions where antigravitySessionLabels[session.id] == nil {
+            antigravitySessionLabels[session.id] = antigravitySessionLabels.count + 1
+        }
+        let list = Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
+                                                 labels: antigravitySessionLabels)
         switch hudDisplayMode {
         case .always:
             return list

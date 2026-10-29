@@ -5,11 +5,12 @@ enum AntigravityReplyWorkflow {
     enum Selection: Sendable { case text(String), option(Int) }
 
     static func run(cascade: UUID, detail: String, selection: Selection,
+                    expectedQuestion: AntigravityQuestion? = nil,
                     fetch: @Sendable () async throws -> Data,
                     stillCurrent: @Sendable () async -> Bool,
                     submit: @Sendable (Data) async throws -> Void) async throws -> Bool {
         let first = try AntigravityInteractionParser.parse(await fetch(), cascadeID: cascade)
-        guard first.matchesDisplayedDetail(detail) else { return false }
+        guard first.matchesDisplayedDetail(detail), expectedQuestion == nil || first == expectedQuestion else { return false }
         let answer: AntigravityQuestion.Answer
         switch selection {
         case .text(let value): answer = .text(value)

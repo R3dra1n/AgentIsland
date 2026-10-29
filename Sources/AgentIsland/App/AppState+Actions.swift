@@ -61,6 +61,26 @@ extension AppState {
         AntigravityActionController.submit(.option(index), state: self)
     }
 
+    func prepareAntigravityQuestion(forSession sessionID: String, expectedIdentity: AntigravityPendingIdentity, expectedDetail: String) {
+        AntigravityActionController.prepare(state: self, sessionID: sessionID, expectedIdentity: expectedIdentity, expectedDetail: expectedDetail)
+    }
+
+    func discardAntigravityQuestion(forSession sessionID: String) {
+        AntigravityActionController.discard(state: self, sessionID: sessionID)
+    }
+
+    func sendAntigravityText(_ text: String, forSession sessionID: String, expectedIdentity: AntigravityPendingIdentity,
+                             expectedDetail: String, expectedQuestion: AntigravityQuestion) {
+        AntigravityActionController.submit(.text(text), state: self, sessionID: sessionID, expectedIdentity: expectedIdentity,
+                                           expectedDetail: expectedDetail, expectedQuestion: expectedQuestion)
+    }
+
+    func sendAntigravityOption(_ index: Int, forSession sessionID: String, expectedIdentity: AntigravityPendingIdentity,
+                               expectedDetail: String, expectedQuestion: AntigravityQuestion) {
+        AntigravityActionController.submit(.option(index), state: self, sessionID: sessionID, expectedIdentity: expectedIdentity,
+                                           expectedDetail: expectedDetail, expectedQuestion: expectedQuestion)
+    }
+
     public func focusApp(for observerId: String) {
         let runningApps = NSWorkspace.shared.runningApplications
         if observerId == "codex" {

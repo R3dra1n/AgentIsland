@@ -1,0 +1,107 @@
+import XCTest
+@testable import AgentIsland
+
+final class AntigravitySessionSnapshotTests: XCTestCase {
+    private func write(_ objects: [[String: Any]], to file: URL) throws {
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var data = Data()
+        for object in objects {
+            data.append(try JSONSerialization.data(withJSONObject: object)); data.append(10)
+        }
+        try data.write(to: file)
+    }
+
+    private func question(_ text: String, date: Date) -> [String: Any] {
+        ["type": "PLANNER_RESPONSE", "status": "DONE", "timestamp": ISO8601DateFormatter().string(from: date),
+         "tool_calls": [["name": "ask_question", "args": ["questions": [["question": text, "options": ["Yes", "No"]]]]]]]
+    }
+
+    private func transcript(_ root: URL, _ id: String, branch: String = "a") -> URL {
+        root.appendingPathComponent(id).appendingPathComponent(branch).appendingPathComponent("b").appendingPathComponent("transcript.jsonl")
+    }
+
+    func testIdenticalQuestionsHaveIndependentStableSessionIdentities() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let firstID = UUID().uuidString, secondID = UUID().uuidString, now = Date()
+        let first = transcript(root, firstID), second = transcript(root, secondID)
+        try write([question("Same question", date: now)], to: first)
+        try write([question("Same question", date: now)], to: second)
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let before = await scanner.scan(now: now)
+        XCTAssertEqual(before.antigravitySessions.count, 2)
+        XCTAssertEqual(Set(before.antigravitySessions.map(\.id)).count, 2)
+        XCTAssertTrue(before.antigravitySessions.allSatisfy { $0.state == .awaitingInput && $0.pendingIdentity != nil })
+        XCTAssertEqual(Set(before.antigravitySessions.compactMap(\.actionDetail)).count, 1)
+        XCTAssertTrue(before.antigravitySessions.allSatisfy { !$0.id.contains(firstID) && !$0.id.contains(secondID) && !$0.id.contains(root.path) })
+        let firstSnapshot = try XCTUnwrap(before.antigravitySessions.first { $0.pendingIdentity?.transcript.resolvingSymlinksInPath() == first.resolvingSymlinksInPath() })
+        // Append result and assistant response, just as a real answered question does.
+        let handle = try FileHandle(forWritingTo: first); try handle.seekToEnd()
+        for event in [["type": "GENERIC", "status": "DONE"], ["type": "PLANNER_RESPONSE", "status": "DONE", "content": "done"]] {
+            try handle.write(contentsOf: JSONSerialization.data(withJSONObject: event) + Data([10]))
+        }
+        try handle.close()
+        let after = await scanner.scan(now: now.addingTimeInterval(1))
+        let same = try XCTUnwrap(after.antigravitySessions.first { $0.id == firstSnapshot.id })
+        XCTAssertEqual(same.state, .completed)
+        XCTAssertNil(same.pendingIdentity)
+        XCTAssertEqual(after.antigravitySessions.filter { $0.state == .awaitingInput }.count, 1)
+    }
+
+    func testHookOnlyWaitingIsVisibleButCannotBeRepliedTo() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let hook = directory.appendingPathComponent("hook.jsonl"), session = UUID().uuidString, now = Date()
+        try write([["hook_event_name": "PermissionRequest", "session_id": session, "received_at": now.timeIntervalSince1970]], to: hook)
+        let scanner = LogScanner(source: "antigravity", root: directory.appendingPathComponent("missing"), hookURL: hook)
+        let snapshot = await scanner.scan(now: now)
+        let item = try XCTUnwrap(snapshot.antigravitySessions.first)
+        XCTAssertEqual(snapshot.antigravitySessions.count, 1)
+        XCTAssertEqual(item.state, .awaitingInput)
+        XCTAssertNil(item.pendingIdentity)
+        XCTAssertNil(item.actionDetail)
+        XCTAssertFalse(item.id.contains(session))
+    }
+
+    func testHookAndTranscriptOfSameUUIDMergeWithoutCaseSensitivity() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID().uuidString, now = Date(), file = transcript(root, id.lowercased())
+        try write([question("One", date: now)], to: file)
+        let hook = root.appendingPathComponent("hook.jsonl")
+        try write([["hook_event_name": "PermissionRequest", "session_id": id.uppercased(), "received_at": now.timeIntervalSince1970]], to: hook)
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: hook)
+        let snapshot = await scanner.scan(now: now)
+        XCTAssertEqual(snapshot.antigravitySessions.count, 1)
+        XCTAssertEqual(snapshot.antigravitySessions.first?.state, .awaitingInput)
+        // The Hook reports a permission, which must not be confused with the
+        // transcript question even though they share the same session ID.
+        XCTAssertNil(snapshot.antigravitySessions.first?.pendingIdentity)
+    }
+
+    func testDuplicateTranscriptsForOneSessionAreNotReplyable() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID().uuidString, now = Date()
+        try write([question("One", date: now)], to: transcript(root, id, branch: "one"))
+        try write([question("Two", date: now)], to: transcript(root, id, branch: "two"))
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let snapshot = await scanner.scan(now: now)
+        XCTAssertEqual(snapshot.antigravitySessions.count, 1)
+        XCTAssertEqual(snapshot.antigravitySessions.first?.state, .awaitingInput)
+        XCTAssertNil(snapshot.antigravitySessions.first?.pendingIdentity)
+    }
+
+    func testOldCompletedSessionIsNotShownButWaitingNeverExpires() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(), old = now.addingTimeInterval(-3600)
+        try write([["type": "PLANNER_RESPONSE", "status": "DONE", "timestamp": ISO8601DateFormatter().string(from: old), "content": "done"]], to: transcript(root, UUID().uuidString))
+        try write([question("Waiting", date: old)], to: transcript(root, UUID().uuidString))
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let snapshot = await scanner.scan(now: now)
+        XCTAssertEqual(snapshot.antigravitySessions.count, 1)
+        XCTAssertEqual(snapshot.antigravitySessions.first?.state, .awaitingInput)
+    }
+}

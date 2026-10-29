@@ -20,105 +20,98 @@ public struct FloatingHUDView: View {
         itemsToShow.map(\.state).max() ?? .idle
     }
 
-    public var body: some View {
-        Group {
-            if appState.hudLayoutMode == .vertical {
-                VStack(spacing: 8) {
-                    ForEach(Array(itemsToShow.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.18))
-                                .frame(width: appState.hudDetailMode == .full ? 150 : 60, height: 1)
-                        }
+    private struct HUDGroup: Identifiable {
+        let id: String
+        var items: [AIObserverItem]
+    }
 
-                        AISegmentView(
-                            appState: appState,
-                            item: item,
-                            isPulsing: isPulsing,
-                            onApprove: { appState.approve(for: item.id) },
-                            onReject: { appState.reject(for: item.id) },
-                            onFocus: { appState.focusApp(for: item.id) },
-                            onAcknowledge: {
-                                if item.id == "codex" { appState.acknowledgeCodex() }
-                                else if item.id == "antigravity" { appState.acknowledgeAntigravity() }
-                                else if item.id == "claude" { appState.acknowledgeClaude() }
-                            }
-                        )
-                    }
-                }
+    private var groups: [HUDGroup] {
+        var result: [HUDGroup] = []
+        for item in itemsToShow {
+            if item.icon == "antigravity", let index = result.firstIndex(where: { $0.id == "antigravity" }) {
+                result[index].items.append(item)
             } else {
-                HStack(spacing: 12) {
-                    ForEach(Array(itemsToShow.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.18))
-                                .frame(width: 1, height: 22)
-                        }
+                result.append(HUDGroup(id: item.icon == "antigravity" ? "antigravity" : item.id, items: [item]))
+            }
+        }
+        return result
+    }
 
-                        AISegmentView(
-                            appState: appState,
-                            item: item,
-                            isPulsing: isPulsing,
-                            onApprove: { appState.approve(for: item.id) },
-                            onReject: { appState.reject(for: item.id) },
-                            onFocus: { appState.focusApp(for: item.id) },
-                            onAcknowledge: {
-                                if item.id == "codex" { appState.acknowledgeCodex() }
-                                else if item.id == "antigravity" { appState.acknowledgeAntigravity() }
-                                else if item.id == "claude" { appState.acknowledgeClaude() }
+    @ViewBuilder
+    private func segment(_ item: AIObserverItem) -> some View {
+        let provider = item.icon == "antigravity" ? "antigravity" : item.id
+        let sessionRow = item.id.hasPrefix(AppState.antigravitySessionPrefix)
+        AISegmentView(appState: appState, item: item, isPulsing: isPulsing,
+            onApprove: { appState.approve(for: provider) },
+            onReject: { appState.reject(for: provider) },
+            onFocus: { appState.focusApp(for: provider) },
+            onAcknowledge: sessionRow ? nil : {
+                if provider == "codex" { appState.acknowledgeCodex() }
+                else if provider == "antigravity" { appState.acknowledgeAntigravity() }
+                else if provider == "claude" { appState.acknowledgeClaude() }
+            })
+    }
+
+    public var body: some View {
+        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+            Group {
+                if appState.hudLayoutMode == .vertical {
+                    VStack(spacing: 8) {
+                        ForEach(Array(itemsToShow.enumerated()), id: \.element.id) { index, item in
+                            if index > 0 {
+                                Rectangle().fill(Color.white.opacity(0.18))
+                                    .frame(width: appState.hudDetailMode == .full ? 150 : 60, height: 1)
                             }
-                        )
+                            segment(item)
+                        }
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 12) {
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
+                            if index > 0 { Rectangle().fill(Color.white.opacity(0.18)).frame(width: 1, height: 22) }
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(group.items) { item in segment(item) }
+                            }
+                        }
                     }
                 }
             }
-        }
-        .fixedSize()
-        .padding(.horizontal, 32)
-        .padding(.vertical, 11)
-        .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Color(NSColor.windowBackgroundColor).opacity(0.88 * appState.hudOpacity))
-
-                if appState.showHUDGlow {
+            .fixedSize()
+            .padding(.horizontal, 32)
+            .padding(.vertical, 11)
+            .background(
+                ZStack {
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(
-                            hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.9 : 0.4) :
-                            (dominantState == .running ? Color.yellow.opacity(0.6) :
-                            (dominantState == .completed ? Color.green.opacity(0.7) : Color.white.opacity(0.12))),
-                            lineWidth: dominantState != .idle ? 2.0 : 1.2
-                        )
-                        .shadow(
-                            color: hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.6 : 0.2) : Color.clear,
-                            radius: 12, x: 0, y: 2
-                        )
+                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.88 * appState.hudOpacity))
+                    if appState.showHUDGlow {
+                        RoundedRectangle(cornerRadius: 24, style: .continuous)
+                            .stroke(hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.9 : 0.4) :
+                                (dominantState == .running ? Color.yellow.opacity(0.6) :
+                                (dominantState == .completed ? Color.green.opacity(0.7) : Color.white.opacity(0.12))),
+                                lineWidth: dominantState != .idle ? 2.0 : 1.2)
+                            .shadow(color: hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.6 : 0.2) : Color.clear,
+                                    radius: 12, x: 0, y: 2)
+                    }
                 }
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            #if AGENTISLAND_ISOLATED_PREVIEW
+            .overlay(alignment: .bottom) {
+                Text("隔离测试版").font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow).offset(y: 13)
             }
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        #if AGENTISLAND_ISOLATED_PREVIEW
-        .overlay(alignment: .bottom) {
-            Text("隔离测试版")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.yellow)
-                .offset(y: 13)
+            #endif
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
+            .padding(.top, 4)
         }
-        #endif
-        .padding(.horizontal, 16)
-        .padding(.bottom, 16)
-        .padding(.top, 4)
-        .contextMenu {
-            contextMenuItems()
-        }
+        .frame(maxWidth: max(100, (NSScreen.main?.visibleFrame.width ?? 1000) - 20),
+               maxHeight: max(100, (NSScreen.main?.visibleFrame.height ?? 700) - 20))
+        .contextMenu { contextMenuItems() }
         .animation(.easeInOut(duration: 0.25), value: itemsToShow)
-        .onAppear {
-            isPulsing = true
-        }
+        .onAppear { isPulsing = true }
         .onChange(of: hasAwaitingInput) { _, newValue in
             if newValue {
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
-                    isPulsing = true
-                }
+                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { isPulsing = true }
             }
         }
     }
@@ -154,6 +147,80 @@ public struct AISegmentView: View {
     var onFocus: (() -> Void)? = nil
     var onAcknowledge: (() -> Void)? = nil
     @State private var showDetail = false
+    @State private var presentedSessionID: String?
+    @State private var presentedIdentity: AntigravityPendingIdentity?
+    @State private var presentedDetail: String?
+    @State private var presentedQuestion: AntigravityQuestion?
+
+    private var isAntigravity: Bool { item.icon == "antigravity" || item.id == "antigravity" }
+    private var rowSessionID: String? {
+        guard item.id.hasPrefix(AppState.antigravitySessionPrefix) else { return nil }
+        return String(item.id.dropFirst(AppState.antigravitySessionPrefix.count))
+    }
+    private var rowFeedback: String? {
+        guard item.state == .awaitingInput else { return nil }
+        return rowSessionID.flatMap { appState.antigravitySessionFeedback[$0] }
+    }
+
+    private func toggleDetail() {
+        if !showDetail {
+            presentedSessionID = nil; presentedIdentity = nil; presentedDetail = nil; presentedQuestion = nil
+            if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
+                let id = String(item.id.dropFirst(AppState.antigravitySessionPrefix.count))
+                if let session = appState.antigravityObserver.sessions.first(where: { $0.id == id }),
+                   let identity = session.pendingIdentity, let detail = session.actionDetail,
+                   detail == item.actionDetail {
+                    presentedSessionID = id; presentedIdentity = identity; presentedDetail = detail
+                    appState.prepareAntigravityQuestion(forSession: id, expectedIdentity: identity, expectedDetail: detail)
+                }
+            }
+        }
+        showDetail.toggle()
+    }
+
+    @ViewBuilder
+    private func detailPopover(_ detail: String) -> some View {
+        if item.id == "codex" {
+            CodexRequestView(appState: appState, onDismiss: { showDetail = false })
+        } else if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
+            let shown = presentedDetail ?? detail
+            VStack(alignment: .leading, spacing: 5) {
+                if let id = presentedSessionID, let identity = presentedIdentity,
+                   let question = presentedQuestion, let frozenDetail = presentedDetail {
+                    ActionDetailPopover(detail: shown, itemName: item.name, supportsFreeText: true,
+                        onChoose: { index in
+                            showDetail = false
+                            appState.sendAntigravityOption(index, forSession: id, expectedIdentity: identity,
+                                                          expectedDetail: frozenDetail, expectedQuestion: question)
+                        }, onSend: { text, _ in
+                            showDetail = false
+                            appState.sendAntigravityText(text, forSession: id, expectedIdentity: identity,
+                                                        expectedDetail: frozenDetail, expectedQuestion: question)
+                        })
+                } else {
+                    ActionDetailPopover(detail: shown, itemName: item.name, supportsFreeText: false, onChoose: nil, onSend: nil)
+                    Text("正在验证，或请在 Antigravity 中处理。")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+            }
+            .onChange(of: presentedSessionID.flatMap { appState.antigravityPreparedQuestions[$0]?.question }, initial: true) { _, question in
+                guard showDetail, presentedQuestion == nil, let id = presentedSessionID,
+                      let identity = presentedIdentity, let detail = presentedDetail,
+                      let prepared = appState.antigravityPreparedQuestions[id],
+                      prepared.identity == identity, prepared.detail == detail, let question else { return }
+                // Keep the first verified question for this panel open; a later
+                // response can only pass if the controller revalidates it.
+                presentedQuestion = question
+            }
+        } else {
+            ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: true,
+                onChoose: item.id == "antigravity" ? { appState.sendAntigravityOption($0) } : nil,
+                onSend: { text, prefix in
+                    showDetail = false
+                    appState.sendTextInput(for: item.id, text: text, prefixKey: prefix)
+                })
+        }
+    }
 
     public var body: some View {
         HStack(spacing: 8) {
@@ -205,7 +272,7 @@ public struct AISegmentView: View {
 
                     if let detail = item.actionDetail, item.state == .awaitingInput {
                         HStack(spacing: 4) {
-                            Text(detail.components(separatedBy: "\n").first ?? detail)
+                            Text(rowFeedback ?? detail.components(separatedBy: "\n").first ?? detail)
                                 .font(.system(size: 10))
                                 .foregroundColor(.orange)
                                 .lineLimit(1)
@@ -213,22 +280,14 @@ public struct AISegmentView: View {
                                 .help(detail)
 
                             if item.state == .awaitingInput {
-                                Button(action: { showDetail.toggle() }) {
+                                Button(action: { toggleDetail() }) {
                                     Image(systemName: "list.bullet.circle.fill")
                                         .font(.system(size: 11))
                                         .foregroundColor(.orange.opacity(0.8))
                                 }
                                 .buttonStyle(.plain)
                                 .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                                    if item.id == "codex" {
-                                        CodexRequestView(appState: appState, onDismiss: { showDetail = false })
-                                    } else {
-                                        ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: true,
-                                            onChoose: item.id == "antigravity" ? { appState.sendAntigravityOption($0) } : nil, onSend: { text, prefix in
-                                            showDetail = false
-                                            appState.sendTextInput(for: item.id, text: text, prefixKey: prefix)
-                                        })
-                                    }
+                                    detailPopover(detail)
                                 }
                             }
                         }
@@ -248,7 +307,10 @@ public struct AISegmentView: View {
                 }
             } else if appState.hudDetailMode == .concise && item.state != .idle {
                 HStack(spacing: 4) {
-                    Text(item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title)
+                    if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
+                        Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                    }
+                    Text(rowFeedback ?? (item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title))
                         .lineLimit(2).frame(maxWidth: 180)
                         .help(item.id == "codex" ? (appState.codexActionFeedback ?? item.description) : item.description)
                         .font(.system(size: 9, weight: .semibold))
@@ -259,22 +321,14 @@ public struct AISegmentView: View {
                         .clipShape(Capsule())
                         
                     if let detail = item.actionDetail, item.state == .awaitingInput {
-                        Button(action: { showDetail.toggle() }) {
+                        Button(action: { toggleDetail() }) {
                             Image(systemName: "list.bullet.circle.fill")
                                 .font(.system(size: 12))
                                 .foregroundColor(.orange.opacity(0.8))
                         }
                         .buttonStyle(.plain)
                         .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                            if item.id == "codex" {
-                                CodexRequestView(appState: appState, onDismiss: { showDetail = false })
-                            } else {
-                            ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: true,
-                                onChoose: item.id == "antigravity" ? { appState.sendAntigravityOption($0) } : nil, onSend: { text, prefix in
-                                showDetail = false
-                                appState.sendTextInput(for: item.id, text: text, prefixKey: prefix)
-                            })
-                            }
+                            detailPopover(detail)
                         }
                     }
                 }
@@ -286,7 +340,7 @@ public struct AISegmentView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 9, weight: .bold))
-                            Text(item.id == "codex" ? "处理请求" : (["antigravity", "cursor", "windsurf", "trae"].contains(item.id) ? "打开处理" : "帮我批准"))
+                            Text(item.id == "codex" ? "处理请求" : ((isAntigravity || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"))
                                 .font(.system(size: 10, weight: .bold))
                                 .lineLimit(1)
                         }
@@ -300,7 +354,7 @@ public struct AISegmentView: View {
                     }
                     .buttonStyle(.plain)
 
-                    if item.id != "antigravity" || appState.testModeActive {
+                    if !isAntigravity || appState.testModeActive {
                     Button(action: { onReject?() }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 8, weight: .bold))
@@ -313,7 +367,7 @@ public struct AISegmentView: View {
                     }
                 }
                 .disabled(item.id == "codex" && appState.codexActionInFlight)
-            } else if item.state == .completed {
+            } else if item.state == .completed, onAcknowledge != nil {
                 Button(action: { onAcknowledge?() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "checkmark.circle.fill")
@@ -331,6 +385,15 @@ public struct AISegmentView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+        .onChange(of: showDetail) { _, visible in
+            if !visible, let id = presentedSessionID {
+                appState.discardAntigravityQuestion(forSession: id)
+                presentedSessionID = nil; presentedIdentity = nil; presentedDetail = nil; presentedQuestion = nil
+            }
+        }
+        .onDisappear {
+            if let id = presentedSessionID { appState.discardAntigravityQuestion(forSession: id) }
         }
     }
 }

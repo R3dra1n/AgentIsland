@@ -17,6 +17,7 @@ public final class AntigravityObserver: AIObserverProtocol {
     public private(set) var lastActiveDate: Date?
     public private(set) var pendingSessionCount = 0
     private(set) var pendingIdentity: AntigravityPendingIdentity?
+    private(set) var sessions: [AntigravitySessionSnapshot] = []
     public weak var delegate: AIObserverDelegate?
     private var polling: Task<Void, Never>?
     private let scanner: LogScanner
@@ -47,8 +48,10 @@ public final class AntigravityObserver: AIObserverProtocol {
         lastActiveDate = snapshot.lastActiveDate
         pendingSessionCount = snapshot.antigravityPendingSessions
         pendingIdentity = snapshot.antigravityPendingIdentity
+        let sessionsChanged = sessions != snapshot.antigravitySessions
+        sessions = snapshot.antigravitySessions
         let detailChanged = actionDetail != snapshot.actionDetail
-        guard state != snapshot.state || statusDescription != snapshot.description || detailChanged else { return }
+        guard state != snapshot.state || statusDescription != snapshot.description || detailChanged || sessionsChanged else { return }
         state = snapshot.state
         statusDescription = snapshot.description
         actionDetail = snapshot.actionDetail

@@ -297,7 +297,7 @@ public struct PopoverContentView: View {
                 .fixedSize()
             }
 
-            Button("撤销 Antigravity 后台回复授权") { AntigravityActionController.revokeConsent() }
+            Button("撤销 Antigravity 后台回复授权") { AntigravityActionController.revokeConsent(state: appState) }
                 .font(.system(size: 11))
         }
         .padding(12)

@@ -78,6 +78,12 @@ public final class FloatingHUDWindowController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.syncVisibility() }
             .store(in: &cancellables)
+
+        // Session rows can change while the aggregate state remains unchanged.
+        state.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.syncVisibility() }
+            .store(in: &cancellables)
         
         syncVisibility()
     }
@@ -87,21 +93,29 @@ public final class FloatingHUDWindowController: NSObject {
     public func updateWindowPosition(animated: Bool = true) {
         // If user is actively dragging or holding the mouse, NEVER interrupt with automatic frame updates!
         if NSEvent.pressedMouseButtons != 0 { return }
-        guard let panel = panel, let screen = NSScreen.main, let state = appState else { return }
+        guard let panel = panel, let screen = panel.screen ?? NSScreen.main, let state = appState else { return }
 
         let screenFrame = screen.frame
 
         let isVertical = state.hudLayoutMode == .vertical
-        let count = max(1, state.displayedObservers.count)
-        
-        let windowWidth: CGFloat = isVertical ? 360 : CGFloat(count * 280 + 160)
-        let windowHeight: CGFloat = isVertical ? CGFloat(count * 50 + 120) : 110
+        let items = state.displayedObservers
+        let count = max(1, items.count)
+        let antigravityRows = items.filter { $0.icon == "antigravity" }.count
+        let groupCount = max(1, count - max(0, antigravityRows - 1))
+        let wantedWidth: CGFloat = isVertical ? 360 : CGFloat(groupCount * 280 + 160)
+        let wantedHeight: CGFloat = isVertical ? CGFloat(count * 50 + 120) : CGFloat(110 + max(0, antigravityRows - 1) * 50)
+        let windowWidth = min(wantedWidth, max(100, screen.visibleFrame.width - 20))
+        #if AGENTISLAND_ISOLATED_PREVIEW
+        let windowHeight = min(wantedHeight, max(100, screen.visibleFrame.height - 130))
+        #else
+        let windowHeight = min(wantedHeight, max(100, screen.visibleFrame.height - 20))
+        #endif
 
         let targetX: CGFloat
         let targetY: CGFloat
         if hasCustomUserPosition {
-            targetX = panel.frame.origin.x
-            targetY = panel.frame.origin.y + (panel.frame.height - windowHeight)
+            targetX = min(max(panel.frame.origin.x, screen.visibleFrame.minX), screen.visibleFrame.maxX - windowWidth)
+            targetY = min(max(panel.frame.origin.y + (panel.frame.height - windowHeight), screen.visibleFrame.minY), screen.visibleFrame.maxY - windowHeight)
         } else {
             targetX = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2.0
             #if AGENTISLAND_ISOLATED_PREVIEW

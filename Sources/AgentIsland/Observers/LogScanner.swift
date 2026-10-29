@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// File I/O and mutable parser state are isolated from the UI and from other polls.
 actor LogScanner {
@@ -29,7 +30,7 @@ actor LogScanner {
             if !hooks.hookedSessions.isEmpty {
                 var values = hooks.states(now: now)
                 if hookFailed { values.append(.unknown) }
-                return ObserverSnapshot(state: values.max() ?? .idle, description: "Hooks 事件 · 日志目录未发现", lastActiveDate: hooks.sessionDates.values.max(), codexRequests: pendingCodexRequests())
+                return ObserverSnapshot(state: values.max() ?? .idle, description: "Hooks 事件 · 日志目录未发现", lastActiveDate: hooks.sessionDates.values.max(), codexRequests: pendingCodexRequests(), antigravitySessions: antigravitySessionSnapshots(now: now))
             }
             return ObserverSnapshot(state: .unknown, description: "未找到日志目录；无法确认状态", lastActiveDate: nil)
         }
@@ -131,8 +132,8 @@ actor LogScanner {
         let codexDetail = requests.count == 1 ? requests.first?.context : nil
         let pendingAntigravity = source == "antigravity" ? sessions.filter { $0.value.visibleState(now: now) == .awaitingInput } : [:]
         let hookWaiting = source == "antigravity" ? hooks.owners.filter { $0.value.visibleState(now: now) == .awaitingInput } : [:]
-        var pendingIDs = Set(pendingAntigravity.keys.map { sessionIDs[$0] ?? $0.path })
-        pendingIDs.formUnion(hookWaiting.keys.map(\.session))
+        var pendingIDs = Set(pendingAntigravity.keys.map { Self.normalizedSessionID(sessionIDs[$0] ?? $0.path) })
+        pendingIDs.formUnion(hookWaiting.keys.map { Self.normalizedSessionID($0.session) })
         let pendingCount = max(pendingAntigravity.count, pendingIDs.count)
         // The UI displays one concrete question. Resolve its transcript only
         // when that exact detail belongs to a single waiting transcript; the
@@ -143,12 +144,76 @@ actor LogScanner {
         var pendingIdentity: AntigravityPendingIdentity?
         if matching.count == 1, let (url, session) = matching.first,
            session.inputRequests.count == 1, session.antigravityQuestionUnambiguous,
+           hooksPermitReply(session: session, id: sessionIDs[url] ?? url.path, now: now),
            let fileID = readers[url]?.fileID {
-            pendingIdentity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.changedAt)
+            pendingIdentity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.changedAt, requestID: session.inputRequests.first)
         }
         return ObserverSnapshot(state: winner, description: detail, lastActiveDate: lastActive,
             actionDetail: source == "codex" ? (codexDetail ?? actionDetail) : actionDetail, codexRequests: requests,
-            antigravityPendingSessions: pendingCount, antigravityPendingIdentity: pendingIdentity)
+            antigravityPendingSessions: pendingCount, antigravityPendingIdentity: pendingIdentity,
+            antigravitySessions: antigravitySessionSnapshots(now: now))
+    }
+
+    /// Group Hook and transcript observations by session. A session can be
+    /// shown without being replyable: only a single unambiguous transcript can
+    /// supply the file identity required for target validation.
+    private func antigravitySessionSnapshots(now: Date) -> [AntigravitySessionSnapshot] {
+        guard source == "antigravity" else { return [] }
+        let transcripts = Dictionary(grouping: sessions.map { ($0.key, $0.value) }) { entry in
+            Self.normalizedSessionID(sessionIDs[entry.0] ?? entry.0.path)
+        }
+        let hookGroups = Dictionary(grouping: hooks.owners.map { ($0.key, $0.value) }) { Self.normalizedSessionID($0.0.session) }
+        let ids = Set(transcripts.keys).union(hookGroups.keys)
+        let snapshots: [AntigravitySessionSnapshot] = ids.compactMap { id in
+            let records = transcripts[id] ?? []
+            let hookRecords = hookGroups[id] ?? []
+            let states = records.map { $0.1.visibleState(now: now) } + hookRecords.map { $0.1.visibleState(now: now) }
+            guard let state = states.max(), state != .idle, state != .unknown else { return nil }
+            let lastChanged = (records.map { $0.1.changedAt } + hookRecords.map { $0.1.changedAt }).max() ?? .distantPast
+            // Historical completed sessions are not resurrected indefinitely.
+            if state == .completed && now.timeIntervalSince(lastChanged) > 600 { return nil }
+            let waiting = records.filter { $0.1.visibleState(now: now) == .awaitingInput && $0.1.pendingActionDetail != nil }
+            let detail = state == .awaitingInput ? waiting.max(by: { $0.1.changedAt < $1.1.changedAt })?.1.pendingActionDetail : nil
+            var identity: AntigravityPendingIdentity?
+            if state == .awaitingInput, records.count == 1, waiting.count == 1,
+               let (url, session) = waiting.first, session.inputRequests.count == 1,
+               session.antigravityQuestionUnambiguous, hooksPermitReply(session: session, id: id, now: now),
+               let fileID = readers[url]?.fileID {
+                identity = AntigravityPendingIdentity(transcript: url, fileID: fileID, changedAt: session.changedAt, requestID: session.inputRequests.first)
+            }
+            let description: String
+            switch state {
+            case .awaitingInput: description = "等待用户操作 / 指令审批"
+            case .running: description = "正在推理并执行任务…"
+            case .completed: description = "本轮任务已完成"
+            case .failed: description = "执行出错"
+            case .interrupted: description = "任务已中断"
+            case .idle, .unknown: description = "待命中"
+            }
+            let opaqueID = SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
+            let lastActive = (records.compactMap { readers[$0.0]?.lastModification } + hookRecords.map { $0.1.changedAt }).max()
+            return .init(id: "ag:" + opaqueID, state: state, description: description,
+                         actionDetail: detail, pendingIdentity: identity, lastActiveDate: lastActive)
+        }
+        return snapshots.sorted {
+            let left = $0.lastActiveDate ?? .distantPast, right = $1.lastActiveDate ?? .distantPast
+            return left == right ? $0.id < $1.id : left > right
+        }
+    }
+
+    private static func normalizedSessionID(_ value: String) -> String {
+        UUID(uuidString: value)?.uuidString.lowercased() ?? value
+    }
+
+    /// A concurrent hook-only approval or different input request in the same
+    /// session cannot safely be treated as the displayed transcript question.
+    private func hooksPermitReply(session: SessionState, id: String, now: Date) -> Bool {
+        let normalized = Self.normalizedSessionID(id)
+        for (owner, state) in hooks.owners where Self.normalizedSessionID(owner.session) == normalized && state.visibleState(now: now) == .awaitingInput {
+            guard state.pendingRequests.count == 1, state.inputRequests.count == 1,
+                  state.inputRequests == session.inputRequests else { return false }
+        }
+        return true
     }
 
     // Codex live status must also be queried when there is no approval/question.
