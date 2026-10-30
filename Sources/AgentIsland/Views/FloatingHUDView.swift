@@ -281,7 +281,11 @@ public struct AISegmentView: View {
                             .lineLimit(1)
                             .fixedSize(horizontal: true, vertical: false)
 
-                        Text(item.state.title)
+                        Group {
+                            if isAntigravity && item.state == .completed {
+                                Button(item.state.title) { onAcknowledge?() }.buttonStyle(.plain)
+                            } else { Text(item.state.title) }
+                        }
                             .font(.system(size: 9, weight: .semibold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
@@ -332,7 +336,13 @@ public struct AISegmentView: View {
                     if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
                         Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
                     }
-                    Text(rowFeedback ?? (item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title))
+                    Group {
+                        if isAntigravity && item.state == .completed {
+                            Button(item.state.title) { onAcknowledge?() }.buttonStyle(.plain)
+                        } else {
+                            Text(rowFeedback ?? (item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title))
+                        }
+                    }
                         .lineLimit(1)
                         .fixedSize(horizontal: item.id == "codex" && appState.codexActionFeedback == nil, vertical: false)
                         .frame(maxWidth: 180)

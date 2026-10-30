@@ -108,6 +108,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published public var antigravityActionInFlight = false
     @Published var antigravitySessionFeedback: [String: String] = [:]
     @Published var antigravityAcknowledgedSessions: [String: Date] = [:]
+    private var antigravityViewedMonitor: AntigravityViewedMonitor?
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
     @Published var antigravityPrevalidationEnabled = false
 
@@ -295,6 +296,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
             Task { @MainActor [weak self] in self?.checkFrontmostAppAndAutoAcknowledge(app: app) }
         }
 
+        let viewedMonitor = AntigravityViewedMonitor(state: self)
+        self.antigravityViewedMonitor = viewedMonitor
+        viewedMonitor.start()
+
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             FloatingHUDWindowController.shared.setup(with: self)
@@ -336,9 +341,8 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         let name = front.localizedName ?? ""
         let bundleId = front.bundleIdentifier ?? ""
 
-        if antigravityNeedsAck && isAppActive(name: name, bundleId: bundleId, for: "antigravity") {
-            acknowledgeAntigravity()
-        }
+        // Antigravity needs per-conversation confirmation; merely switching
+        // to its app must not acknowledge unrelated completed sessions.
         if codexNeedsAck && isAppActive(name: name, bundleId: bundleId, for: "codex") {
             acknowledgeCodex()
         }
