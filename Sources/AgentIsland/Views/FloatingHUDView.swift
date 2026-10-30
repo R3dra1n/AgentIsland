@@ -54,8 +54,11 @@ public struct FloatingHUDView: View {
             onApprove: { appState.approve(for: provider) },
             onReject: { appState.reject(for: provider) },
             onFocus: { appState.focusApp(for: provider) },
-            onAcknowledge: sessionRow ? nil : {
+            onAcknowledge: {
                 if provider == "codex" { appState.acknowledgeCodex() }
+                else if provider == "antigravity", sessionRow {
+                    appState.acknowledgeAntigravitySession(String(item.id.dropFirst(AppState.antigravitySessionPrefix.count)))
+                }
                 else if provider == "antigravity" { appState.acknowledgeAntigravity() }
                 else if provider == "claude" { appState.acknowledgeClaude() }
             })
@@ -389,11 +392,14 @@ public struct AISegmentView: View {
                 }
                 .disabled(item.id == "codex" && appState.codexActionInFlight)
             } else if item.state == .completed, onAcknowledge != nil {
+                if isAntigravity {
+                    Button("打开") { onFocus?() }.buttonStyle(.plain).font(.system(size: 9))
+                }
                 Button(action: { onAcknowledge?() }) {
                     HStack(spacing: 3) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 11, weight: .bold))
-                        Text("待命")
+                        Text(isAntigravity ? "已查看" : "待命")
                             .font(.system(size: 9, weight: .semibold))
                             .lineLimit(1)
                     }

@@ -47,6 +47,22 @@ final class CodexNativeBridgeTests: XCTestCase {
         XCTAssertEqual(remaining.count, 1)
         XCTAssertTrue((remaining[0]["requestID"] as! String).contains("other"))
     }
+
+    func testCompleteHistoryOnlyReconcilesKnownAnsweredOrFailedCalls() throws {
+        let answeredID = "[\"request_user_input_async\",\"answered\",0]"
+        let body = String(decoding: try CodexNativeBridge.encode([["questionItemId": answeredID, "question": "q", "answer": "ok"]]), as: UTF8.self)
+        let response: [String: Any] = ["type": "userMessage", "content": [["type": "text", "text": "<send_user_message_question_reply>\(body)</send_user_message_question_reply>"]]]
+        var snapshot: [String: Any] = ["turnHistory": ["kind": "canonical", "history": ["isComplete": true, "entitiesByKey": [
+            "a": ["turnId": "a", "status": "completed", "items": [question("answered"), question("waiting"), response]],
+            "b": ["turnId": "b", "status": "failed", "items": [question("failed")]]
+        ]]]]
+        let pending = try CodexNativeBridge.pending(snapshot)
+        XCTAssertEqual(CodexNativeBridge.resolvedAsyncCalls(snapshot, pending: pending), ["answered", "failed"])
+        snapshot["turnHistory"] = ["kind": "canonical", "history": ["isComplete": false, "entitiesByKey": [
+            "a": ["turnId": "a", "status": "completed", "items": [question("answered"), response]]
+        ]]]
+        XCTAssertTrue(CodexNativeBridge.resolvedAsyncCalls(snapshot, pending: try CodexNativeBridge.pending(snapshot)).isEmpty)
+    }
     func testAsyncResponseCarriesRestoreContextAndUnicode() throws {
         var snapshot = state([question()]); snapshot["cwd"] = "/tmp/example"
         let request = try XCTUnwrap(CodexNativeBridge.pending(snapshot).first)
@@ -222,6 +238,37 @@ final class CodexNativeBridgeTests: XCTestCase {
         let transport = try CodexIPCTransport(connectedSocket: left)
         let result = try CodexNativeBridge.run(CodexNativeBridge.encode(command(request)), transport: transport)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: result) as? [String: Any])?["ok"] as? Bool, true)
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoadingFullHistoryReconcilesFailedCallWithoutSendingReply() throws {
+        let (left, right) = try sockets()
+        let done = expectation(description: "mock full history")
+        let partial: [String: Any] = ["turnHistory": ["kind": "canonical", "history": ["isComplete": false, "entitiesByKey": [:]]]]
+        let full: [String: Any] = ["threadRuntimeStatus": ["type": "idle"], "turnHistory": ["kind": "canonical", "history": ["isComplete": true, "entitiesByKey": [
+            "old": ["turnId": "old", "status": "failed", "items": [question("old-call")]]
+        ]]]]
+        let partialData = try CodexNativeBridge.encode(partial), fullData = try CodexNativeBridge.encode(full)
+        DispatchQueue.global().async {
+            defer { done.fulfill() }
+            do {
+                let server = try CodexIPCTransport(connectedSocket: right)
+                let hello = try server.receive()
+                try server.send(["type": "response", "requestId": hello["requestId"]!, "resultType": "success", "result": ["clientId": "client"]])
+                _ = try server.receive()
+                let partialState = try JSONSerialization.jsonObject(with: partialData)
+                try server.send(["method": "thread-stream-state-changed", "sourceClientId": "owner", "params": ["conversationId": "thread", "hostId": "local", "change": ["type": "snapshot", "conversationState": partialState]]])
+                let request = try server.receive()
+                XCTAssertEqual(request["method"] as? String, "thread-follower-load-complete-history")
+                let fullState = try JSONSerialization.jsonObject(with: fullData)
+                try server.send(["method": "thread-stream-state-changed", "sourceClientId": "owner", "params": ["conversationId": "thread", "hostId": "local", "change": ["type": "snapshot", "conversationState": fullState]]])
+                try server.send(["type": "response", "requestId": request["requestId"]!, "resultType": "success", "result": [:]])
+            } catch { XCTFail("Mock desktop: \(error)") }
+        }
+        let result = try CodexNativeBridge.run(CodexNativeBridge.encode(["sessionID": "thread", "loadCompleteHistory": true]), transport: CodexIPCTransport(connectedSocket: left))
+        let reply = try XCTUnwrap(try JSONSerialization.jsonObject(with: result) as? [String: Any])
+        XCTAssertEqual(reply["resolvedAsyncCallIDs"] as? [String], ["old-call"])
+        XCTAssertTrue((reply["requests"] as? [[String: Any]] ?? []).isEmpty)
         wait(for: [done], timeout: 3)
     }
 }

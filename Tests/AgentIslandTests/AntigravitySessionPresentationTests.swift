@@ -7,9 +7,9 @@ final class AntigravitySessionPresentationTests: XCTestCase {
         AIObserverItem(id: id, name: id, icon: id, isEnabled: true, state: .running, description: "working")
     }
 
-    private func session(_ id: String, _ state: AIState, detail: String? = nil) -> AntigravitySessionSnapshot {
+    private func session(_ id: String, _ state: AIState, detail: String? = nil, lastActiveDate: Date? = nil) -> AntigravitySessionSnapshot {
         .init(id: id, state: state, description: "actual state", actionDetail: detail,
-              pendingIdentity: nil, lastActiveDate: nil)
+              pendingIdentity: nil, lastActiveDate: lastActiveDate)
     }
 
     func testSessionsHaveStableDistinctRowsAndPreserveProviderOrder() {
@@ -39,5 +39,21 @@ final class AntigravitySessionPresentationTests: XCTestCase {
     func testNoSessionsLeavesOriginalProviderUnchanged() {
         let original = provider("antigravity")
         XCTAssertEqual(AppState.expandAntigravitySessions([original], sessions: [], feedback: [:], labels: [:]), [original])
+    }
+
+    func testViewedCompletionOnlyClearsMatchingSessionAndNotNewActivity() {
+        let now = Date(timeIntervalSince1970: 1000)
+        let first = session("ag:first", .completed, lastActiveDate: now)
+        let second = session("ag:second", .completed, lastActiveDate: now)
+        let labels = [first.id: 1, second.id: 2]
+        let viewed = AppState.expandAntigravitySessions([provider("antigravity")], sessions: [first, second],
+            feedback: [:], labels: labels, acknowledged: [first.id: now])
+        XCTAssertEqual(viewed.map(\.state), [.idle, .completed])
+        XCTAssertEqual(viewed.first?.description, "待命中")
+        let newCompletion = session(first.id, .completed, lastActiveDate: now.addingTimeInterval(1))
+        let waiting = session(second.id, .awaitingInput, lastActiveDate: now)
+        let changed = AppState.expandAntigravitySessions([provider("antigravity")], sessions: [newCompletion, waiting],
+            feedback: [:], labels: labels, acknowledged: [first.id: now, second.id: now])
+        XCTAssertEqual(changed.map(\.state), [.completed, .awaitingInput])
     }
 }

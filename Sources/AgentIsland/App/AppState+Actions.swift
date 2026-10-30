@@ -86,7 +86,7 @@ extension AppState {
         if observerId == "codex" {
             CodexActionController.focus(codexPendingRequests.count == 1 ? codexPendingRequests.first?.sessionID : nil)
         } else if observerId == "antigravity" {
-            if let app = runningApps.first(where: { $0.localizedName?.localizedCaseInsensitiveContains("Antigravity") == true }) {
+            if let app = runningApps.first(where: { $0.bundleIdentifier == "com.google.antigravity" }) {
                 if #available(macOS 14.0, *), let url = app.bundleURL { let config = NSWorkspace.OpenConfiguration(); config.activates = true; NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil) } else { app.activate(options: .activateIgnoringOtherApps) }
             }
         } else {
@@ -115,6 +115,19 @@ extension AppState {
         antigravityState = .idle
         antigravityDescription = "待命中"
         recalculateAggregatedState()
+    }
+
+    func acknowledgeAntigravitySession(_ id: String) {
+        guard let session = antigravityObserver.sessions.first(where: { $0.id == id }), session.state == .completed,
+              let completion = session.completedAt ?? session.lastActiveDate else { return }
+        antigravityAcknowledgedSessions[id] = max(Date(), completion)
+        UserDefaults.standard.set(antigravityAcknowledgedSessions, forKey: "antigravityAcknowledgedSessions")
+        let stillActive = antigravityObserver.sessions.contains { session in
+            if session.state == .running || session.state == .awaitingInput { return true }
+            guard session.state == .completed else { return false }
+            return (antigravityAcknowledgedSessions[session.id] ?? .distantPast) < (session.completedAt ?? session.lastActiveDate ?? .distantFuture)
+        }
+        if !stillActive { acknowledgeAntigravity() }
     }
 
     public func acknowledgeClaude() {

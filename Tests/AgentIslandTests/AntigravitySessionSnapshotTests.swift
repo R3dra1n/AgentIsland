@@ -47,8 +47,9 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         XCTAssertNil(same.pendingIdentity)
         XCTAssertEqual(after.antigravitySessions.filter { $0.state == .awaitingInput }.count, 1)
         let later = await scanner.scan(now: now.addingTimeInterval(7))
-        XCTAssertEqual(later.antigravitySessions.count, 1)
-        XCTAssertEqual(later.antigravitySessions.first?.state, .awaitingInput)
+        XCTAssertEqual(later.antigravitySessions.count, 2)
+        XCTAssertEqual(later.antigravitySessions.filter { $0.state == .awaitingInput }.count, 1)
+        XCTAssertEqual(later.antigravitySessions.filter { $0.state == .completed }.count, 1)
         XCTAssertEqual(later.state, .awaitingInput)
     }
 
@@ -97,7 +98,7 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         XCTAssertNil(snapshot.antigravitySessions.first?.pendingIdentity)
     }
 
-    func testOldCompletedSessionIsNotShownButWaitingNeverExpires() async throws {
+    func testOldCompletedSessionAndWaitingArePreserved() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let now = Date(), old = now.addingTimeInterval(-3600)
@@ -105,8 +106,9 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         try write([question("Waiting", date: old)], to: transcript(root, UUID().uuidString))
         let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
         let snapshot = await scanner.scan(now: now)
-        XCTAssertEqual(snapshot.antigravitySessions.count, 1)
-        XCTAssertEqual(snapshot.antigravitySessions.first?.state, .awaitingInput)
+        XCTAssertEqual(snapshot.antigravitySessions.count, 2)
+        XCTAssertEqual(snapshot.antigravitySessions.filter { $0.state == .awaitingInput }.count, 1)
+        XCTAssertEqual(snapshot.antigravitySessions.filter { $0.state == .completed }.count, 1)
     }
 
     func testRepeatedQuestionKeepsIdentityButAnsweredAndReaskedQuestionGetsNewIdentity() async throws {

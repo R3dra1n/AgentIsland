@@ -407,9 +407,6 @@ struct SessionState: Sendable {
     }
 
     func visibleState(now: Date, source: String? = nil) -> AIState {
-        if source == "antigravity", state == .completed, now.timeIntervalSince(changedAt) > 5 {
-            return .idle
-        }
         // Interrupted, and failed states display for 5s, then seamlessly transition to idle
         if [.interrupted, .failed].contains(state) && now.timeIntervalSince(changedAt) > 5 {
             return .idle
@@ -452,6 +449,7 @@ struct AntigravitySessionSnapshot: Identifiable, Equatable, Sendable {
     let actionDetail: String?
     let pendingIdentity: AntigravityPendingIdentity?
     let lastActiveDate: Date?
+    var completedAt: Date? = nil
 }
 
 struct ObserverSnapshot: Sendable {

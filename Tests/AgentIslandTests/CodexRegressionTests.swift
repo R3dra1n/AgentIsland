@@ -74,6 +74,14 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertTrue(merged.allSatisfy(\.isAsynchronous))
     }
 
+    func testCompleteHistoryReconciliationRemovesOnlyConfirmedResolvedCalls() {
+        let a = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "answered", isQuestion: true, context: nil, isAsynchronous: true)
+        let b = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "unknown", isQuestion: true, context: nil, isAsynchronous: true)
+        let other = CodexPendingRequest(sessionID: "b", turnID: "t", requestID: "answered", isQuestion: true, context: nil, isAsynchronous: true)
+        let result = CodexObserver.mergeRequests([a, b, other], live: [], session: "a", resolvedAsyncCallIDs: ["answered"])
+        XCTAssertEqual(result, [other, b])
+    }
+
     func testScannerReportsActiveCodexSessionForIPCFailureFallback() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

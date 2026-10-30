@@ -45,21 +45,23 @@ public final class CodexObserver: AIObserverProtocol {
                 var snapshot = await scanner.scan()
                 let previousRequests = self?.pendingRequests ?? []
                 let pendingSessions = Set((snapshot.codexRequests + previousRequests).map(\.sessionID))
+                let historyNeededSessions = Set(snapshot.codexRequests.filter { $0.isAsynchronous && $0.desktopMethod == nil }.map(\.sessionID))
                 let fallbackActive = await scanner.activeCodexSessionStates()
                 let recent = await scanner.recentCodexSessionIDs()
                 let sessions = pendingSessions.union(recent).union(fallbackActive.keys).filter { !$0.isEmpty }
                 var liveStates: [CodexLiveActivity] = []
-                await withTaskGroup(of: (String, [CodexPendingRequest]?, CodexLiveActivity?).self) { group in
+                await withTaskGroup(of: (String, [CodexPendingRequest]?, CodexLiveActivity?, Set<String>).self) { group in
                     for session in sessions {
                         group.addTask {
-                            let live = await CodexDesktopBridge.shared.requests(session: session, force: pendingSessions.contains(session) || fallbackActive[session] != nil)
-                            return (session, live?.requests, live?.activity)
+                            let live = await CodexDesktopBridge.shared.requests(session: session, force: pendingSessions.contains(session) || fallbackActive[session] != nil,
+                                                                                loadFullHistory: historyNeededSessions.contains(session))
+                            return (session, live?.requests, live?.activity, live?.resolvedAsyncCallIDs ?? [])
                         }
                     }
-                    for await (session, requests, state) in group {
-                        if let requests, let state, state.state != .unknown {
-                            snapshot.codexRequests = Self.mergeRequests(snapshot.codexRequests, live: requests, session: session)
-                            liveStates.append(state)
+                    for await (session, requests, state, resolved) in group {
+                        if let requests, let state {
+                            snapshot.codexRequests = Self.mergeRequests(snapshot.codexRequests, live: requests, session: session, resolvedAsyncCallIDs: resolved)
+                            if state.state != .unknown { liveStates.append(state) }
                         } else if !snapshot.codexRequests.contains(where: { $0.sessionID == session }) {
                             snapshot.codexRequests.append(contentsOf: previousRequests.filter { $0.sessionID == session })
                         }
@@ -85,8 +87,8 @@ public final class CodexObserver: AIObserverProtocol {
 
     public func stopObserving() { polling?.cancel(); polling = nil }
 
-    nonisolated static func mergeRequests(_ existing: [CodexPendingRequest], live: [CodexPendingRequest], session: String) -> [CodexPendingRequest] {
-        let asyncQuestions = existing.filter { $0.sessionID == session && $0.isQuestion && $0.isAsynchronous }
+    nonisolated static func mergeRequests(_ existing: [CodexPendingRequest], live: [CodexPendingRequest], session: String, resolvedAsyncCallIDs: Set<String> = []) -> [CodexPendingRequest] {
+        let asyncQuestions = existing.filter { $0.sessionID == session && $0.isQuestion && $0.isAsynchronous && !resolvedAsyncCallIDs.contains($0.requestID) }
         var result = existing.filter { $0.sessionID != session }
         func sourceID(_ request: CodexPendingRequest) -> String {
             guard request.desktopMethod == "async-question", let bytes = request.requestID.data(using: .utf8),

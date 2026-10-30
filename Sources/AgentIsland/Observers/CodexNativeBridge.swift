@@ -277,6 +277,31 @@ enum CodexNativeBridge {
         return output
     }
 
+    /// A partial history cannot establish that an old question was answered.
+    /// With complete history, only reconcile identities actually present in it.
+    static func resolvedAsyncCalls(_ state: [String: Any], pending: [[String: Any]]) -> Set<String> {
+        guard let history = state["turnHistory"] as? [String: Any], history["kind"] as? String == "canonical",
+              let store = history["history"] as? [String: Any], store["isComplete"] as? Bool == true else { return [] }
+        var pendingCalls = Set<String>()
+        for request in pending where request["method"] as? String == "async-question" {
+            guard let id = request["requestID"] as? String, let bytes = id.data(using: .utf8),
+                  let parts = (try? JSONSerialization.jsonObject(with: bytes)) as? [Any], parts.count == 3,
+                  parts[0] as? String == "request_user_input_async", let call = parts[1] as? String else { continue }
+            pendingCalls.insert(call)
+        }
+        var seen = Set<String>()
+        for turn in turns(state) {
+            guard ["completed", "failed", "interrupted"].contains(turn["status"] as? String ?? "") else { continue }
+            for item in turn["items"] as? [[String: Any]] ?? [] {
+                guard item["type"] as? String == "agentMessage", item["delivery"] as? String == "async",
+                      let id = item["id"] as? String, let questions = item["questions"] as? [[String: Any]],
+                      !questions.isEmpty, questions.allSatisfy({ $0["title"] is String }) else { continue }
+                seen.insert(id)
+            }
+        }
+        return seen.subtracting(pendingCalls)
+    }
+
     static func replyRequest(_ command: [String: Any], state: [String: Any], thread: String) throws -> (String, [String: Any]) {
         let matches = try pending(state).filter { $0["requestID"] as? String == command["requestID"] as? String }
         guard matches.count == 1, let request = matches.first, let rawID = request["rawID"], let method = request["method"] as? String else {
@@ -328,6 +353,13 @@ enum CodexNativeBridge {
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
         let connection = try transport ?? CodexIPCTransport(path: URL(fileURLWithPath: home).appendingPathComponent("ipc/ipc.sock").path)
         let session = try CodexIPCSession(thread: thread, transport: connection)
+        if command["loadCompleteHistory"] as? Bool == true,
+           let history = session.state?["turnHistory"] as? [String: Any], history["kind"] as? String == "canonical",
+           let store = history["history"] as? [String: Any], store["isComplete"] as? Bool == false {
+            // Read-only: ask the owner to load the thread's existing history.
+            // If unavailable, retain the partial snapshot and do not clear.
+            _ = try? session.request("thread-follower-load-complete-history", params: ["conversationId": thread])
+        }
         guard let state = session.state else { throw CodexIPCTransport.Failure.invalid("Codex 未提供任务快照") }
         if command["action"] as? String == "reply" {
             let (method, params) = try replyRequest(command, state: state, thread: thread)
@@ -335,7 +367,8 @@ enum CodexNativeBridge {
             return try encode(["ok": true, "message": "Codex 已接收操作；等待状态更新"])
         }
         let latest = latestTurn(state)
-        return try encode(["ok": true, "requests": pending(state),
+        let requests = try pending(state)
+        return try encode(["ok": true, "requests": requests, "resolvedAsyncCallIDs": Array(resolvedAsyncCalls(state, pending: requests)),
                            "runtime": (state["threadRuntimeStatus"] as? [String: Any])?["type"] ?? "unknown",
                            "activity": executionState(state), "turnID": latest["turnId"] ?? NSNull(),
                            "turnStartedAtMs": latest["turnStartedAtMs"] ?? NSNull()])

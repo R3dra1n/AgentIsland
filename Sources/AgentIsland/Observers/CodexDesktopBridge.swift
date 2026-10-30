@@ -10,6 +10,7 @@ actor CodexDesktopBridge {
     static let shared = CodexDesktopBridge()
     private static let ioQueue = DispatchQueue(label: "AgentIsland.CodexIPC", qos: .utility, attributes: .concurrent)
     private var retryAfter: [String: Date] = [:]
+    private var historyRetryAfter: [String: Date] = [:]
     struct Reply: Decodable, Sendable {
         var ok: Bool
         var error: String?
@@ -19,6 +20,7 @@ actor CodexDesktopBridge {
         var turnID: String?
         var turnStartedAtMs: Double?
         var requests: [Request]?
+        var resolvedAsyncCallIDs: [String]?
     }
     struct Request: Decodable, Sendable {
         var requestID: String
@@ -42,9 +44,11 @@ actor CodexDesktopBridge {
         return try JSONDecoder().decode(Reply.self, from: data)
     }
 
-    func requests(session: String, force: Bool = false) async -> (requests: [CodexPendingRequest], activity: CodexLiveActivity)? {
+    func requests(session: String, force: Bool = false, loadFullHistory: Bool = false) async -> (requests: [CodexPendingRequest], activity: CodexLiveActivity, resolvedAsyncCallIDs: Set<String>)? {
         if !force, let retry = retryAfter[session], retry > Date() { return nil }
-        guard let reply = try? await call(["sessionID": session]), reply.ok else {
+        let loadHistory = loadFullHistory && (historyRetryAfter[session] ?? .distantPast) <= Date()
+        if loadHistory { historyRetryAfter[session] = Date().addingTimeInterval(30) }
+        guard let reply = try? await call(["sessionID": session, "loadCompleteHistory": loadHistory]), reply.ok else {
             retryAfter[session] = Date().addingTimeInterval(30)
             return nil
         }
@@ -53,7 +57,7 @@ actor CodexDesktopBridge {
             isQuestion: !$0.questions.isEmpty, context: $0.context, questions: $0.questions, desktopMethod: $0.method) }
         let state = reply.activity.flatMap(AIState.init(rawValue:)) ?? (reply.runtime == "active" ? .running : .unknown)
         let startedAt = reply.turnStartedAtMs.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0 / 1000) : nil }
-        return (requests, CodexLiveActivity(sessionID: session, turnID: reply.turnID, state: state, startedAt: startedAt))
+        return (requests, CodexLiveActivity(sessionID: session, turnID: reply.turnID, state: state, startedAt: startedAt), Set(reply.resolvedAsyncCallIDs ?? []))
     }
     func respond(_ request: CodexPendingRequest, answers: [String: String] = [:], approve: Bool = false) async -> String {
         do {

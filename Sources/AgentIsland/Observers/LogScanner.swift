@@ -178,9 +178,6 @@ actor LogScanner {
             let hookRecords = hookGroups[id] ?? []
             let states = records.map { $0.1.visibleState(now: now, source: source) } + hookRecords.map { $0.1.visibleState(now: now, source: source) }
             guard let state = states.max(), state != .idle, state != .unknown else { return nil }
-            let lastChanged = (records.map { $0.1.changedAt } + hookRecords.map { $0.1.changedAt }).max() ?? .distantPast
-            // Historical completed sessions are not resurrected indefinitely.
-            if state == .completed && now.timeIntervalSince(lastChanged) > 600 { return nil }
             let waiting = records.filter { $0.1.visibleState(now: now) == .awaitingInput && $0.1.pendingActionDetail != nil }
             let detail = state == .awaitingInput ? waiting.max(by: { $0.1.changedAt < $1.1.changedAt })?.1.pendingActionDetail : nil
             var identity: AntigravityPendingIdentity?
@@ -201,8 +198,9 @@ actor LogScanner {
             }
             let opaqueID = SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined()
             let lastActive = (records.compactMap { readers[$0.0]?.lastModification } + hookRecords.map { $0.1.changedAt }).max()
+            let completedAt = state == .completed ? (records.filter { $0.1.state == .completed }.map { $0.1.changedAt } + hookRecords.filter { $0.1.state == .completed }.map { $0.1.changedAt }).max() : nil
             return .init(id: "ag:" + opaqueID, state: state, description: description,
-                         actionDetail: detail, pendingIdentity: identity, lastActiveDate: lastActive)
+                         actionDetail: detail, pendingIdentity: identity, lastActiveDate: lastActive, completedAt: completedAt)
         }
         return snapshots.sorted {
             let left = $0.lastActiveDate ?? .distantPast, right = $1.lastActiveDate ?? .distantPast

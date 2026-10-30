@@ -46,7 +46,7 @@ final class StateTests: XCTestCase {
         state.consume(["type": "PLANNER_RESPONSE", "status": "DONE"], source: "antigravity", date: now)
         XCTAssertEqual(state.state, .completed)
         XCTAssertEqual(state.visibleState(now: now.addingTimeInterval(4), source: "antigravity"), .completed)
-        XCTAssertEqual(state.visibleState(now: now.addingTimeInterval(6), source: "antigravity"), .idle)
+        XCTAssertEqual(state.visibleState(now: now.addingTimeInterval(600), source: "antigravity"), .completed)
         XCTAssertEqual(state.visibleState(now: now.addingTimeInterval(6), source: "codex"), .completed)
     }
 

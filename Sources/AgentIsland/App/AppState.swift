@@ -107,6 +107,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published public var antigravityActionDetail: String?
     @Published public var antigravityActionInFlight = false
     @Published var antigravitySessionFeedback: [String: String] = [:]
+    @Published var antigravityAcknowledgedSessions: [String: Date] = [:]
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
     @Published var antigravityPrevalidationEnabled = false
 
@@ -161,14 +162,18 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     private var antigravitySessionLabels: [String: Int] = [:]
 
     static func expandAntigravitySessions(_ providers: [AIObserverItem], sessions: [AntigravitySessionSnapshot],
-                                          feedback: [String: String], labels: [String: Int]) -> [AIObserverItem] {
+                                          feedback: [String: String], labels: [String: Int],
+                                          acknowledged: [String: Date] = [:]) -> [AIObserverItem] {
         providers.flatMap { provider in
             guard provider.id == "antigravity", !sessions.isEmpty else { return [provider] }
             return sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session in
                 let label = labels[session.id] ?? 0
+                let viewed = session.state == .completed && ((session.completedAt ?? session.lastActiveDate).map {
+                    (acknowledged[session.id] ?? .distantPast) >= $0
+                } ?? false)
                 return AIObserverItem(id: antigravitySessionPrefix + session.id, name: "Antigravity · 会话 \(label)",
-                    icon: "antigravity", isEnabled: provider.isEnabled, state: session.state,
-                    description: session.state == .awaitingInput ? (feedback[session.id] ?? session.description) : session.description,
+                    icon: "antigravity", isEnabled: provider.isEnabled, state: viewed ? .idle : session.state,
+                    description: viewed ? "待命中" : (session.state == .awaitingInput ? (feedback[session.id] ?? session.description) : session.description),
                     actionDetail: session.actionDetail)
             }
         }
@@ -184,7 +189,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
             antigravitySessionLabels[session.id] = antigravitySessionLabels.count + 1
         }
         let list = Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
-                                                 labels: antigravitySessionLabels)
+                                                 labels: antigravitySessionLabels, acknowledged: antigravityAcknowledgedSessions)
         switch hudDisplayMode {
         case .always:
             return list
@@ -200,6 +205,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
 
     public init() {
         // Load settings
+        self.antigravityAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "antigravityAcknowledgedSessions") as? [String: Date] ?? [:]
         self.antigravityPrevalidationEnabled = UserDefaults.standard.bool(forKey: "antigravityPrevalidationEnabled") && UserDefaults.standard.bool(forKey: "antigravityLocalReplyConsent")
         if UserDefaults.standard.object(forKey: "isHUDEnabled") != nil {
             self.isHUDEnabled = UserDefaults.standard.bool(forKey: "isHUDEnabled")
