@@ -258,7 +258,12 @@ enum CodexNativeBridge {
             let replies = value as? [[String: Any]] ?? (value as? [String: Any]).map { [$0] } ?? []
             answered.formUnion(replies.compactMap { $0["questionItemId"] as? String })
         }
-        for item in items(state, activeOnly: true) {
+        // Async questions can remain answerable after the turn that emitted
+        // them completed. Do not revive questions from failed/interrupted turns.
+        let questionItems = turns(state).filter {
+            ["inProgress", "completed"].contains($0["status"] as? String ?? "")
+        }.flatMap { $0["items"] as? [[String: Any]] ?? [] }
+        for item in questionItems {
             guard item["type"] as? String == "agentMessage", item["delivery"] as? String == "async",
                   let id = item["id"] as? String, let questions = item["questions"] as? [[String: Any]] else { continue }
             for (index, question) in questions.enumerated() {

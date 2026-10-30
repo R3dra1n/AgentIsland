@@ -20,7 +20,12 @@ final class CodexNativeBridgeTests: XCTestCase {
         XCTAssertEqual(values[0]["requestID"] as? String, "[\"request_user_input_async\",\"call-real\",0]")
         let questions = values[0]["questions"] as! [[String: Any]]
         XCTAssertEqual(questions[0]["options"] as? [String], ["A", "B"])
-        XCTAssertTrue(try CodexNativeBridge.pending(state([question()], status: "completed")).isEmpty)
+        let completed = state([question()], status: "completed")
+        let carried = try CodexNativeBridge.pending(completed)
+        XCTAssertEqual(carried.count, 1)
+        XCTAssertEqual(try CodexNativeBridge.replyRequest(command(carried[0]), state: completed, thread: "thread").0, "thread-follower-steer-turn")
+        XCTAssertTrue(try CodexNativeBridge.pending(state([question()], status: "failed")).isEmpty)
+        XCTAssertTrue(try CodexNativeBridge.pending(state([question()], status: "interrupted")).isEmpty)
     }
     func testOnlyAcceptedIdentityMatchedReplyClearsQuestion() throws {
         let requests = try CodexNativeBridge.pending(state([question(), question("other")]))

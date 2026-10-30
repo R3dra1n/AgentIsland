@@ -88,12 +88,19 @@ public final class CodexObserver: AIObserverProtocol {
     nonisolated static func mergeRequests(_ existing: [CodexPendingRequest], live: [CodexPendingRequest], session: String) -> [CodexPendingRequest] {
         let asyncQuestions = existing.filter { $0.sessionID == session && $0.isQuestion && $0.isAsynchronous }
         var result = existing.filter { $0.sessionID != session }
+        func sourceID(_ request: CodexPendingRequest) -> String {
+            guard request.desktopMethod == "async-question", let bytes = request.requestID.data(using: .utf8),
+                  let parts = (try? JSONSerialization.jsonObject(with: bytes)) as? [Any], parts.count == 3,
+                  parts[0] as? String == "request_user_input_async", let callID = parts[1] as? String,
+                  parts[2] is NSNumber else { return request.requestID }
+            return callID
+        }
         for var request in live {
-            if asyncQuestions.contains(where: { $0.requestID == request.requestID }) { request.isAsynchronous = true }
+            if asyncQuestions.contains(where: { $0.requestID == sourceID(request) }) { request.isAsynchronous = true }
             result.append(request)
         }
         result.append(contentsOf: asyncQuestions.filter { previous in
-            !live.contains { $0.sessionID == previous.sessionID && $0.requestID == previous.requestID }
+            !live.contains { $0.sessionID == previous.sessionID && sourceID($0) == previous.requestID }
         })
         return result
     }

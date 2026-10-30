@@ -60,6 +60,20 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertEqual(liveMerged[0].desktopMethod, "item/tool/requestUserInput")
     }
 
+    func testLiveAsyncQuestionReplacesMatchingLogCallWithoutDuplicate() {
+        let queued = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "call_123", isQuestion: true,
+            context: "question", isAsynchronous: true)
+        var first = CodexPendingRequest(sessionID: "a", turnID: nil,
+            requestID: "[\"request_user_input_async\",\"call_123\",0]", isQuestion: true, context: "one")
+        first.desktopMethod = "async-question"
+        var second = CodexPendingRequest(sessionID: "a", turnID: nil,
+            requestID: "[\"request_user_input_async\",\"call_123\",1]", isQuestion: true, context: "two")
+        second.desktopMethod = "async-question"
+        let merged = CodexObserver.mergeRequests([queued], live: [first, second], session: "a")
+        XCTAssertEqual(merged.count, 2)
+        XCTAssertTrue(merged.allSatisfy(\.isAsynchronous))
+    }
+
     func testScannerReportsActiveCodexSessionForIPCFailureFallback() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
