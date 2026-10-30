@@ -17,6 +17,10 @@ struct AntigravityLocalTransport {
         ["2.27.0", "2.28.0", "2.28.2"].contains(version)
     }
 
+    static func requireSupportedVersion(_ version: String) throws {
+        guard supportsVersion(version) else { throw Failure.unsupported }
+    }
+
     struct Endpoint: Equatable, Sendable { let pid: Int; let port: Int; let certificate: Data }
     enum Failure: Error { case unavailable, unsafe, unsupported, invalidResponse }
     private final class Capture: @unchecked Sendable { var bytes = Data(); var overflow = false }
@@ -64,18 +68,18 @@ struct AntigravityLocalTransport {
 
     private static func server() throws -> (pid: Int, bundle: URL) {
         let result = try text("/bin/ps", ["-u", String(getuid()), "-o", "pid=,comm="])
-        let matches: [(Int, URL)] = result.split(separator: "\n").compactMap { line in
+        let matches: [(Int, URL, String)] = result.split(separator: "\n").compactMap { line in
             let bits = line.split(maxSplits: 1, whereSeparator: { $0.isWhitespace })
             guard bits.count == 2, let pid = Int(bits[0]), pid > 1 else { return nil }
             let path = URL(fileURLWithPath: String(bits[1])).standardizedFileURL.resolvingSymlinksInPath()
             guard path.path.hasSuffix(executableSuffix) else { return nil }
             let bundle = path.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             guard let metadata = Bundle(url: bundle), metadata.bundleIdentifier == "com.google.antigravity",
-                  let version = metadata.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
-                  supportsVersion(version) else { return nil }
-            return (pid, bundle)
+                  let version = metadata.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String else { return nil }
+            return (pid, bundle, version)
         }
         guard matches.count == 1 else { throw Failure.unavailable }
+        try requireSupportedVersion(matches[0].2)
         return (matches[0].0, matches[0].1)
     }
 

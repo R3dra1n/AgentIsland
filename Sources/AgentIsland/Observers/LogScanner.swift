@@ -28,7 +28,7 @@ actor LogScanner {
         }
         guard fm.fileExists(atPath: root.path) else {
             if !hooks.hookedSessions.isEmpty {
-                var values = hooks.states(now: now)
+                var values = hooks.states(now: now, source: source)
                 if hookFailed { values.append(.unknown) }
                 return ObserverSnapshot(state: values.max() ?? .idle, description: "Hooks 事件 · 日志目录未发现", lastActiveDate: hooks.sessionDates.values.max(), codexRequests: pendingCodexRequests(), antigravitySessions: antigravitySessionSnapshots(now: now))
             }
@@ -87,7 +87,7 @@ actor LogScanner {
                 hooks.reconcileResolvedAsync(session: id, ids: session.resolvedAsyncRequestIDs, date: session.changedAt)
             }
         }
-        var states = sessions.filter { !hooks.hookedSessions.contains(sessionIDs[$0.key] ?? "") }.values.map { $0.visibleState(now: now) }
+        var states = sessions.filter { !hooks.hookedSessions.contains(sessionIDs[$0.key] ?? "") }.values.map { $0.visibleState(now: now, source: source) }
         // If any session in transcript is actively awaiting input/approval,
         // it must always be included. Hooks (like PreInvocation) do not detect approval modals.
         for (url, value) in sessions {
@@ -101,7 +101,7 @@ actor LogScanner {
                 states.append(.awaitingInput)
             }
         }
-        states += hooks.states(now: now)
+        states += hooks.states(now: now, source: source)
         let resolvedWinner = states.max() ?? .idle
         let winner = (resolvedWinner == .unknown) ? .idle : resolvedWinner
         let count = states.filter { $0 == .running || $0 == .awaitingInput }.count
@@ -176,7 +176,7 @@ actor LogScanner {
         let snapshots: [AntigravitySessionSnapshot] = ids.compactMap { id in
             let records = transcripts[id] ?? []
             let hookRecords = hookGroups[id] ?? []
-            let states = records.map { $0.1.visibleState(now: now) } + hookRecords.map { $0.1.visibleState(now: now) }
+            let states = records.map { $0.1.visibleState(now: now, source: source) } + hookRecords.map { $0.1.visibleState(now: now, source: source) }
             guard let state = states.max(), state != .idle, state != .unknown else { return nil }
             let lastChanged = (records.map { $0.1.changedAt } + hookRecords.map { $0.1.changedAt }).max() ?? .distantPast
             // Historical completed sessions are not resurrected indefinitely.

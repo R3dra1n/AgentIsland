@@ -18,7 +18,14 @@ extension AppState {
             }
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &codexState, providerDesc: &codexDescription, providerNeedsAck: &codexNeedsAck, providerActionDetail: &codexActionDetail)
         } else if observer.id == "antigravity" {
-            updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &antigravityState, providerDesc: &antigravityDescription, providerNeedsAck: &antigravityNeedsAck, providerActionDetail: &antigravityActionDetail)
+            if state == .idle {
+                antigravityNeedsAck = false
+                antigravityState = .idle
+                antigravityDescription = "待命中"
+                antigravityActionDetail = nil
+            } else {
+                updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &antigravityState, providerDesc: &antigravityDescription, providerNeedsAck: &antigravityNeedsAck, providerActionDetail: &antigravityActionDetail)
+            }
             AntigravityActionController.refreshPrevalidation(state: self)
         } else if observer.id == "claude" {
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &claudeState, providerDesc: &claudeDescription, providerNeedsAck: &claudeNeedsAck, providerActionDetail: &claudeActionDetail)

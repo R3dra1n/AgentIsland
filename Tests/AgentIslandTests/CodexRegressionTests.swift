@@ -98,7 +98,19 @@ final class CodexRegressionTests: XCTestCase {
     }
 
     func call(_ name: String, id: String = "q") -> [String: Any] {
-        ["type": "response_item", "payload": ["type": "function_call", "name": name, "call_id": id]]
+        ["type": "response_item", "payload": ["type": "function_call", "name": name, "call_id": id,
+          "arguments": "{\"questions\":[{\"title\":\"Synthetic\"}]}" ]]
+    }
+
+    func structuredReply(_ pairs: [(String, Int)], turn: String = "next") throws -> [String: Any] {
+        let replies = try pairs.map { id, index -> [String: Any] in
+            let questionID = String(decoding: try JSONSerialization.data(withJSONObject: ["request_user_input_async", id, index]), as: UTF8.self)
+            return ["questionItemId": questionID, "question": "Synthetic", "answer": "OK"]
+        }
+        let body = String(decoding: try JSONSerialization.data(withJSONObject: replies), as: UTF8.self)
+        return ["type": "response_item", "payload": ["type": "message", "role": "user",
+            "internal_chat_message_metadata_passthrough": ["turn_id": turn, "content_item_kinds": ["user.text"]],
+            "content": [["type": "input_text", "text": "<send_user_message_question_reply>\(body)</send_user_message_question_reply>"]]]]
     }
 
     func testAsyncHookReturnAndUnrelatedToolsKeepWaiting() {
@@ -156,7 +168,7 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertEqual(store.states(now: now).max(), .awaitingInput)
     }
 
-    func testLogAsyncReturnKeepsQuestionUntilSameTurnUserText() {
+    func testUnidentifiedUserTextDoesNotClearAsyncQuestion() {
         var value = SessionState()
         value.consume(["payload": ["type": "task_started", "turn_id": "t"]], source: "codex", date: now)
         value.consume(call("request_user_input_async"), source: "codex", date: now)
@@ -164,11 +176,11 @@ final class CodexRegressionTests: XCTestCase {
         value.consume(call("read_file", id: "other"), source: "codex", date: now)
         XCTAssertEqual(value.visibleState(now: now.addingTimeInterval(3600)), .awaitingInput)
         value.consume(["type": "response_item", "payload": ["type": "message", "role": "user", "internal_chat_message_metadata_passthrough": ["turn_id": "t", "content_item_kinds": ["user.text"]]]], source: "codex", date: now.addingTimeInterval(1))
-        XCTAssertEqual(value.state, .running)
-        XCTAssertTrue(value.asyncRequests.isEmpty)
+        XCTAssertEqual(value.state, .awaitingInput)
+        XCTAssertEqual(value.asyncRequests, ["q"])
     }
 
-    func testCompletedCodexTurnKeepsAsyncQuestionUntilExplicitReply() {
+    func testCompletedCodexTurnKeepsAsyncQuestionUntilExplicitReply() throws {
         var value = SessionState()
         value.consume(["payload": ["type": "task_started", "turn_id": "t"]], source: "codex", date: now)
         value.consume(call("request_user_input_async", id: "call_123"), source: "codex", date: now.addingTimeInterval(1))
@@ -178,11 +190,30 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertEqual(value.asyncRequests, ["call_123"])
         value.consume(["payload": ["type": "task_started", "turn_id": "next"]], source: "codex", date: now.addingTimeInterval(4))
         XCTAssertEqual(value.state, .awaitingInput)
-        value.consume(["type": "response_item", "payload": ["type": "message", "role": "user",
-            "internal_chat_message_metadata_passthrough": ["turn_id": "next", "content_item_kinds": ["user.text"]],
-            "content": [["type": "input_text", "text": "<send_user_message_question_reply>call_123</send_user_message_question_reply>"]]]], source: "codex", date: now.addingTimeInterval(5))
+        value.consume(try structuredReply([("call_123", 0)]), source: "codex", date: now.addingTimeInterval(5))
         XCTAssertTrue(value.asyncRequests.isEmpty)
         XCTAssertEqual(value.state, .running)
+    }
+
+    func testStructuredRepliesResolveAllMatchingCallsAndKeepPartialMultiQuestion() throws {
+        var value = SessionState()
+        value.consume(call("request_user_input_async", id: "call_A"), source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "call_B"), source: "codex", date: now)
+        value.consume(["type": "response_item", "payload": ["type": "function_call", "name": "request_user_input_async", "call_id": "call_C", "arguments": "{\"questions\":[{\"title\":\"first\"},{\"title\":\"second\"}]}"]], source: "codex", date: now)
+        value.consume(try structuredReply([("call_A", 0), ("call_B", 0), ("call_C", 0)]), source: "codex", date: now)
+        XCTAssertEqual(value.pendingRequests, ["call_C"])
+        XCTAssertEqual(value.resolvedAsyncRequestIDs, ["call_A", "call_B"])
+        value.consume(try structuredReply([("call_C", 1)]), source: "codex", date: now)
+        XCTAssertTrue(value.pendingRequests.isEmpty)
+        XCTAssertEqual(value.resolvedAsyncRequestIDs, ["call_A", "call_B", "call_C"])
+    }
+
+    func testMalformedOrUnrelatedStructuredReplyCannotClearPendingQuestion() throws {
+        var value = SessionState()
+        value.consume(call("request_user_input_async", id: "call_real"), source: "codex", date: now)
+        value.consume(try structuredReply([("call_other", 0)]), source: "codex", date: now)
+        value.consume(["type": "response_item", "payload": ["type": "message", "role": "user", "content": [["type": "input_text", "text": "<send_user_message_question_reply>call_real</send_user_message_question_reply>"]]]], source: "codex", date: now)
+        XCTAssertEqual(value.pendingRequests, ["call_real"])
     }
 
     func testCodexStopPreservesAsyncQuestionButAntigravityStopIsUnchanged() {
@@ -191,7 +222,11 @@ final class CodexRegressionTests: XCTestCase {
         codex.consume(hook("PreToolUse", tool: "request_user_input_async", second: 1), source: "codex")
         codex.consume(hook("Stop", second: 2), source: "codex")
         XCTAssertEqual(codex.states(now: now.addingTimeInterval(3600)).max(), .awaitingInput)
-        codex.consume(hook("UserPromptSubmit", second: 3), source: "codex")
+        codex.consume(hook("UserPromptSubmit", second: 2.5), source: "codex")
+        XCTAssertEqual(codex.states(now: now.addingTimeInterval(2.5)).max(), .awaitingInput)
+        var answered = hook("UserPromptSubmit", second: 3)
+        answered["request_id"] = "q"
+        codex.consume(answered, source: "codex")
         XCTAssertEqual(codex.states(now: now.addingTimeInterval(3)).max(), .running)
 
         var antigravity = HookStateStore()
@@ -288,7 +323,9 @@ final class CodexRegressionTests: XCTestCase {
         }
         try bytes(logs).write(to: root.appendingPathComponent("session.jsonl"))
         let hookURL = root.appendingPathComponent("hooks")
-        try bytes([hook("UserPromptSubmit"), hook("PreToolUse", tool: "request_user_input_async", second: 1), hook("UserPromptSubmit", second: 2)]).write(to: hookURL)
+        var answeredHook = hook("UserPromptSubmit", second: 2)
+        answeredHook["request_id"] = "q"
+        try bytes([hook("UserPromptSubmit"), hook("PreToolUse", tool: "request_user_input_async", second: 1), answeredHook]).write(to: hookURL)
         let scanner = LogScanner(source: "codex", root: root, hookURL: hookURL)
         let result = await scanner.scan(now: now.addingTimeInterval(3))
         XCTAssertEqual(result.state, .running)

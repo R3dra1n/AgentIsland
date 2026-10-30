@@ -46,6 +46,10 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         XCTAssertEqual(same.state, .completed)
         XCTAssertNil(same.pendingIdentity)
         XCTAssertEqual(after.antigravitySessions.filter { $0.state == .awaitingInput }.count, 1)
+        let later = await scanner.scan(now: now.addingTimeInterval(7))
+        XCTAssertEqual(later.antigravitySessions.count, 1)
+        XCTAssertEqual(later.antigravitySessions.first?.state, .awaitingInput)
+        XCTAssertEqual(later.state, .awaitingInput)
     }
 
     func testHookOnlyWaitingIsVisibleButCannotBeRepliedTo() async throws {

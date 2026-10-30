@@ -14,12 +14,13 @@ struct AntigravityPreparedQuestion: Equatable, Sendable {
 
 private enum AntigravityPreparationResult: Sendable {
     case ready(AntigravityPreparedQuestion)
-    case connectionUnavailable, queryFailed, unsupportedQuestion, detailMismatch
+    case connectionUnavailable, unsupportedVersion, queryFailed, unsupportedQuestion, detailMismatch
 
     var failureMessage: String {
         switch self {
         case .ready: return ""
         case .connectionUnavailable: return "无法连接 Antigravity 本机服务，请检查版本"
+        case .unsupportedVersion: return "此 Antigravity 版本尚未验证，请在原应用回复"
         case .queryFailed: return "无法读取此会话的问题，请在 Antigravity 处理"
         case .unsupportedQuestion: return "问题结构无法确认，请在 Antigravity 处理"
         case .detailMismatch: return "显示的问题与会话不一致，请在 Antigravity 处理"
@@ -86,6 +87,7 @@ enum AntigravityActionController {
                     discover: { try await AntigravityLocalTransport.discover() },
                     revalidate: { try await AntigravityLocalTransport.revalidate($0) })
             }
+            catch AntigravityLocalTransport.Failure.unsupported { return .unsupportedVersion }
             catch { return .connectionUnavailable }
             let data: Data
             do {

@@ -7,6 +7,7 @@ struct SessionState: Sendable {
     var changedAt = Date.distantPast
     var pendingRequests: Set<String> = []
     var asyncRequests: Set<String> = []
+    var asyncUnansweredIndexes: [String: Set<Int>] = [:]
     // Only explicitly identified answers may reconcile a separate hook stream.
     var resolvedAsyncRequestIDs: Set<String> = []
     var inputRequests: Set<String> = []
@@ -36,6 +37,21 @@ struct SessionState: Sendable {
         let outer = json["type"] as? String ?? ""
         let metadata = payload["internal_chat_message_metadata_passthrough"] as? [String: Any]
         let incomingTurn = payload["turn_id"] as? String ?? json["turn_id"] as? String ?? metadata?["turn_id"] as? String
+        // Async answers can arrive in a later turn. Parse structured question
+        // identities before filtering old turns, never by searching free text.
+        if source == "codex", outer == "response_item", kind == "message", payload["role"] as? String == "user",
+           let content = payload["content"] as? [[String: Any]],
+           let text = content.compactMap({ $0["text"] as? String }).first(where: { $0.contains("<send_user_message_question_reply>") }) {
+            for (id, index) in Self.asyncReplyIdentities(text) {
+                guard asyncRequests.contains(id), var remaining = asyncUnansweredIndexes[id], remaining.remove(index) != nil else { continue }
+                if remaining.isEmpty {
+                    recordExplicitAsyncResolution(id)
+                    resolveRequest(id)
+                } else { asyncUnansweredIndexes[id] = remaining }
+            }
+            if state == .awaitingInput { transition(pendingRequests.isEmpty ? .running : .awaitingInput, date) }
+            return
+        }
         let starts = ["task_started", "turn_started"].contains(kind) || (source == "antigravity" && outer == "USER_INPUT")
         if starts {
             if let incomingTurn, seenTurns.contains(incomingTurn), incomingTurn != turnID { return }
@@ -45,6 +61,7 @@ struct SessionState: Sendable {
             if !waitingForAsync {
                 pendingRequests.removeAll()
                 asyncRequests.removeAll()
+                asyncUnansweredIndexes.removeAll()
                 inputRequests.removeAll()
                 requestContexts.removeAll()
             }
@@ -99,15 +116,9 @@ struct SessionState: Sendable {
                 let metadata = payload["internal_chat_message_metadata_passthrough"] as? [String: Any]
                 let kinds = metadata?["content_item_kinds"] as? [String] ?? []
                 if kinds.contains("user.text") {
-                    var resolvedId = payload["request_id"] as? String
-                    if resolvedId == nil, let content = payload["content"] as? [[String: Any]], let textObj = content.first(where: { ($0["type"] as? String) == "input_text" }), let text = textObj["text"] as? String {
-                        if text.contains("<send_user_message_question_reply>"),
-                           let range = text.range(of: "call_[a-zA-Z0-9]+", options: .regularExpression) {
-                            resolvedId = String(text[range])
-                        }
-                    }
+                    let resolvedId = payload["request_id"] as? String
                     if let resolvedId { recordExplicitAsyncResolution(resolvedId) }
-                    inputSubmitted(requestID: resolvedId)
+                    inputSubmitted(requestID: resolvedId, allowUnidentifiedAsync: false)
                     if state == .awaitingInput { transition(pendingRequests.isEmpty ? .running : .awaitingInput, date) }
                 }
                 return
@@ -142,6 +153,11 @@ struct SessionState: Sendable {
                     if name.hasSuffix("request_user_input_async") {
                         resolvedAsyncRequestIDs.remove(id)
                         asyncRequests.insert(id)
+                        if let raw = payload["arguments"] as? String, let bytes = raw.data(using: .utf8),
+                           let args = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+                           let questions = args["questions"] as? [[String: Any]], !questions.isEmpty {
+                            asyncUnansweredIndexes[id] = Set(questions.indices)
+                        }
                     }
                     transition(.awaitingInput, date)
                 } else {
@@ -322,6 +338,7 @@ struct SessionState: Sendable {
     mutating func clearRequests() {
         pendingRequests.removeAll()
         asyncRequests.removeAll()
+        asyncUnansweredIndexes.removeAll()
         inputRequests.removeAll()
         antigravitySawInputResult = false
         antigravityQuestionUnambiguous = false
@@ -337,6 +354,7 @@ struct SessionState: Sendable {
         pendingRequests = retained
         asyncRequests = retained
         inputRequests = retained
+        asyncUnansweredIndexes = asyncUnansweredIndexes.filter { retained.contains($0.key) }
         requestContexts = requestContexts.filter { retained.contains($0.key) }
         commandDigests.removeAll()
         return !retained.isEmpty
@@ -345,8 +363,24 @@ struct SessionState: Sendable {
     mutating func resolveRequest(_ id: String) {
         pendingRequests.remove(id)
         asyncRequests.remove(id)
+        asyncUnansweredIndexes.removeValue(forKey: id)
         inputRequests.remove(id)
         commandDigests.removeValue(forKey: id)
+    }
+
+    private static func asyncReplyIdentities(_ text: String) -> [(String, Int)] {
+        guard let start = text.range(of: "<send_user_message_question_reply>"),
+              let end = text.range(of: "</send_user_message_question_reply>", range: start.upperBound..<text.endIndex),
+              let bytes = String(text[start.upperBound..<end.lowerBound]).data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: bytes) else { return [] }
+        let replies: [[String: Any]] = (decoded as? [[String: Any]]) ?? (decoded as? [String: Any]).map { [$0] } ?? []
+        return replies.compactMap { reply in
+            guard let value = reply["questionItemId"] as? String, let data = value.data(using: .utf8),
+                  let parts = (try? JSONSerialization.jsonObject(with: data)) as? [Any], parts.count == 3,
+                  parts[0] as? String == "request_user_input_async", let id = parts[1] as? String,
+                  let index = parts[2] as? Int, index >= 0 else { return nil }
+            return (id, index)
+        }
     }
 
     private mutating func recordExplicitAsyncResolution(_ id: String) {
@@ -358,10 +392,11 @@ struct SessionState: Sendable {
 
     // A legacy hook has no answer ID. Only resolve an unambiguous input request,
     // never a command permission or multiple independent questions.
-    mutating func inputSubmitted(requestID: String?) {
+    mutating func inputSubmitted(requestID: String?, allowUnidentifiedAsync: Bool = true) {
         if let requestID {
             if inputRequests.contains(requestID) { resolveRequest(requestID) }
-        } else if inputRequests.count == 1, let id = inputRequests.first {
+        } else if inputRequests.count == 1, let id = inputRequests.first,
+                  allowUnidentifiedAsync || !asyncRequests.contains(id) {
             resolveRequest(id)
         }
     }
@@ -371,7 +406,10 @@ struct SessionState: Sendable {
         changedAt = date
     }
 
-    func visibleState(now: Date) -> AIState {
+    func visibleState(now: Date, source: String? = nil) -> AIState {
+        if source == "antigravity", state == .completed, now.timeIntervalSince(changedAt) > 5 {
+            return .idle
+        }
         // Interrupted, and failed states display for 5s, then seamlessly transition to idle
         if [.interrupted, .failed].contains(state) && now.timeIntervalSince(changedAt) > 5 {
             return .idle

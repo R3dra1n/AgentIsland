@@ -10,5 +10,9 @@ final class AntigravityVersionTests: XCTestCase {
         XCTAssertFalse(AntigravityLocalTransport.supportsVersion("2.28.3"))
         XCTAssertFalse(AntigravityLocalTransport.supportsVersion("2.29.0"))
         XCTAssertFalse(AntigravityLocalTransport.supportsVersion(""))
+        XCTAssertNoThrow(try AntigravityLocalTransport.requireSupportedVersion("2.28.2"))
+        XCTAssertThrowsError(try AntigravityLocalTransport.requireSupportedVersion("2.28.3")) { error in
+            guard case AntigravityLocalTransport.Failure.unsupported = error else { return XCTFail("Expected unsupported version") }
+        }
     }
 }

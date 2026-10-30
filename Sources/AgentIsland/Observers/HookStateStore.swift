@@ -27,7 +27,7 @@ struct HookStateStore: Sendable {
         if name == "UserPromptSubmit" {
             if turn == sessionTurns[session], turn != nil {
                 var value = owners[owner] ?? SessionState()
-                value.inputSubmitted(requestID: event["request_id"] as? String)
+                value.inputSubmitted(requestID: event["request_id"] as? String, allowUnidentifiedAsync: source != "codex")
                 value.transition(value.pendingRequests.isEmpty ? .running : .awaitingInput, date)
                 owners[owner] = value
                 sessionDates[session] = date
@@ -136,5 +136,5 @@ struct HookStateStore: Sendable {
         }
     }
 
-    func states(now: Date) -> [AIState] { owners.values.map { $0.visibleState(now: now) } }
+    func states(now: Date, source: String? = nil) -> [AIState] { owners.values.map { $0.visibleState(now: now, source: source) } }
 }
