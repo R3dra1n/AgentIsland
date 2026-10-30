@@ -297,9 +297,20 @@ enum CodexNativeBridge {
                 let restore: [String: Any] = ["id": clientID, "cwd": state["cwd"] ?? NSNull(), "context": [
                     "prompt": text, "turnTrigger": "send_user_message_async_question", "addedFiles": [], "fileAttachments": [],
                     "imageAttachments": [], "commentAttachments": [], "ideContext": NSNull()] as [String: Any]]
-                return ("thread-follower-steer-turn", ["conversationId": thread,
-                    "input": [["type": "text", "text": text, "text_elements": []] as [String: Any]],
-                    "clientUserMessageId": clientID, "restoreMessage": restore])
+                let input: [[String: Any]] = [["type": "text", "text": text, "text_elements": []]]
+                let turnStatus = latestTurn(state)["status"] as? String
+                let runtime = (state["threadRuntimeStatus"] as? [String: Any])?["type"] as? String
+                if turnStatus == "inProgress" {
+                    return ("thread-follower-steer-turn", ["conversationId": thread, "input": input,
+                        "clientUserMessageId": clientID, "restoreMessage": restore])
+                }
+                if turnStatus == "completed", runtime == "idle" {
+                    let start: [String: Any] = ["request": ["threadId": thread, "input": input,
+                        "clientUserMessageId": clientID, "turnTrigger": "send_user_message_async_question"],
+                        "context": ["inheritThreadSettings": true, "restoreMessage": restore]]
+                    return ("thread-follower-start-turn", ["conversationId": thread, "turnStart": start])
+                }
+                throw CodexIPCTransport.Failure.invalid("无法确认 Codex 是否可以接收回答，请在 Codex 中处理")
             }
             params["response"] = ["answers": answers.mapValues { ["answers": [$0]] }]
             return ("thread-follower-submit-user-input", params)
@@ -320,7 +331,7 @@ enum CodexNativeBridge {
         guard let state = session.state else { throw CodexIPCTransport.Failure.invalid("Codex 未提供任务快照") }
         if command["action"] as? String == "reply" {
             let (method, params) = try replyRequest(command, state: state, thread: thread)
-            _ = try session.request(method, params: params)
+            _ = try session.request(method, params: params, version: method == "thread-follower-start-turn" ? 2 : 1)
             return try encode(["ok": true, "message": "Codex 已接收操作；等待状态更新"])
         }
         let latest = latestTurn(state)

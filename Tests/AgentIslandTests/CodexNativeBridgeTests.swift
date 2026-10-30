@@ -20,10 +20,19 @@ final class CodexNativeBridgeTests: XCTestCase {
         XCTAssertEqual(values[0]["requestID"] as? String, "[\"request_user_input_async\",\"call-real\",0]")
         let questions = values[0]["questions"] as! [[String: Any]]
         XCTAssertEqual(questions[0]["options"] as? [String], ["A", "B"])
-        let completed = state([question()], status: "completed")
+        var completed = state([question()], status: "completed")
+        completed["threadRuntimeStatus"] = ["type": "idle"]
         let carried = try CodexNativeBridge.pending(completed)
         XCTAssertEqual(carried.count, 1)
-        XCTAssertEqual(try CodexNativeBridge.replyRequest(command(carried[0]), state: completed, thread: "thread").0, "thread-follower-steer-turn")
+        let (route, params) = try CodexNativeBridge.replyRequest(command(carried[0]), state: completed, thread: "thread")
+        XCTAssertEqual(route, "thread-follower-start-turn")
+        let start = params["turnStart"] as! [String: Any]
+        let input = start["request"] as! [String: Any]
+        XCTAssertEqual(input["threadId"] as? String, "thread")
+        XCTAssertEqual(input["turnTrigger"] as? String, "send_user_message_async_question")
+        XCTAssertTrue((((input["input"] as? [[String: Any]])?.first?["text"] as? String) ?? "").contains("call-real"))
+        completed["threadRuntimeStatus"] = ["type": "active"]
+        XCTAssertThrowsError(try CodexNativeBridge.replyRequest(command(carried[0]), state: completed, thread: "thread"))
         XCTAssertTrue(try CodexNativeBridge.pending(state([question()], status: "failed")).isEmpty)
         XCTAssertTrue(try CodexNativeBridge.pending(state([question()], status: "interrupted")).isEmpty)
     }
@@ -181,6 +190,35 @@ final class CodexNativeBridgeTests: XCTestCase {
             } catch { XCTFail("Mock desktop: \(error)") }
         }
         let request = try XCTUnwrap(CodexNativeBridge.pending(state([question()])).first)
+        let transport = try CodexIPCTransport(connectedSocket: left)
+        let result = try CodexNativeBridge.run(CodexNativeBridge.encode(command(request)), transport: transport)
+        XCTAssertEqual((try JSONSerialization.jsonObject(with: result) as? [String: Any])?["ok"] as? Bool, true)
+        wait(for: [done], timeout: 3)
+    }
+
+    func testCompletedTurnReplyUsesVersionTwoStartRoute() throws {
+        let (left, right) = try sockets()
+        let done = expectation(description: "mock completed desktop turn")
+        var snapshot = state([question()], status: "completed")
+        snapshot["threadRuntimeStatus"] = ["type": "idle"]
+        let encodedSnapshot = try CodexNativeBridge.encode(snapshot)
+        DispatchQueue.global().async {
+            defer { done.fulfill() }
+            do {
+                let server = try CodexIPCTransport(connectedSocket: right)
+                let hello = try server.receive()
+                try server.send(["type": "response", "requestId": hello["requestId"]!, "resultType": "success", "result": ["clientId": "client"]])
+                _ = try server.receive() // follow notification
+                let parsed = try JSONSerialization.jsonObject(with: encodedSnapshot)
+                try server.send(["method": "thread-stream-state-changed", "sourceClientId": "owner", "params": ["conversationId": "thread", "hostId": "local", "change": ["type": "snapshot", "conversationState": parsed]]])
+                let action = try server.receive()
+                XCTAssertEqual(action["method"] as? String, "thread-follower-start-turn")
+                XCTAssertEqual(action["version"] as? Int, 2)
+                XCTAssertEqual(action["targetClientId"] as? String, "owner")
+                try server.send(["type": "response", "requestId": action["requestId"]!, "resultType": "success", "result": [:]])
+            } catch { XCTFail("Mock desktop: \(error)") }
+        }
+        let request = try XCTUnwrap(CodexNativeBridge.pending(snapshot).first)
         let transport = try CodexIPCTransport(connectedSocket: left)
         let result = try CodexNativeBridge.run(CodexNativeBridge.encode(command(request)), transport: transport)
         XCTAssertEqual((try JSONSerialization.jsonObject(with: result) as? [String: Any])?["ok"] as? Bool, true)
