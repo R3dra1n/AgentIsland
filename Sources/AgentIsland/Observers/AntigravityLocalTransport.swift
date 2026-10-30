@@ -12,9 +12,9 @@ struct AntigravityLocalTransport {
     private static let maximumResponse = 4 * 1024 * 1024
 
     // Other releases fail closed until their protocol and signing have been
-    // checked. 2.28.0 remains experimental pending real reply verification.
+    // checked. New versions remain experimental until real reply verification.
     static func supportsVersion(_ version: String) -> Bool {
-        ["2.27.0", "2.28.0"].contains(version)
+        ["2.27.0", "2.28.0", "2.28.2"].contains(version)
     }
 
     struct Endpoint: Equatable, Sendable { let pid: Int; let port: Int; let certificate: Data }
