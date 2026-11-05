@@ -82,6 +82,16 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertEqual(result, [other, b])
     }
 
+    func testHistoricalAsyncCallsAreHiddenWithoutHidingCurrentOrOtherSessions() {
+        let old = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "old", isQuestion: true, context: nil, isAsynchronous: true)
+        let current = CodexPendingRequest(sessionID: "a", turnID: "new", requestID: "current", isQuestion: true, context: nil, isAsynchronous: true)
+        let other = CodexPendingRequest(sessionID: "b", turnID: "t", requestID: "old", isQuestion: true, context: nil, isAsynchronous: true)
+        var liveOld = CodexPendingRequest(sessionID: "a", turnID: nil, requestID: "[\"request_user_input_async\",\"old\",0]", isQuestion: true, context: nil)
+        liveOld.desktopMethod = "async-question"
+        let result = CodexObserver.mergeRequests([old, current, other], live: [liveOld], session: "a", historicalAsyncCallIDs: ["old"])
+        XCTAssertEqual(result, [other, current])
+    }
+
     func testScannerReportsActiveCodexSessionForIPCFailureFallback() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

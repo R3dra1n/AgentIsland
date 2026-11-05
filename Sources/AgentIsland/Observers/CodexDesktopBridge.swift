@@ -21,6 +21,7 @@ actor CodexDesktopBridge {
         var turnStartedAtMs: Double?
         var requests: [Request]?
         var resolvedAsyncCallIDs: [String]?
+        var historicalAsyncCallIDs: [String]?
     }
     struct Request: Decodable, Sendable {
         var requestID: String
@@ -44,7 +45,7 @@ actor CodexDesktopBridge {
         return try JSONDecoder().decode(Reply.self, from: data)
     }
 
-    func requests(session: String, force: Bool = false, loadFullHistory: Bool = false) async -> (requests: [CodexPendingRequest], activity: CodexLiveActivity, resolvedAsyncCallIDs: Set<String>)? {
+    func requests(session: String, force: Bool = false, loadFullHistory: Bool = false) async -> (requests: [CodexPendingRequest], activity: CodexLiveActivity, resolvedAsyncCallIDs: Set<String>, historicalAsyncCallIDs: Set<String>)? {
         if !force, let retry = retryAfter[session], retry > Date() { return nil }
         let loadHistory = loadFullHistory && (historyRetryAfter[session] ?? .distantPast) <= Date()
         if loadHistory { historyRetryAfter[session] = Date().addingTimeInterval(30) }
@@ -57,7 +58,7 @@ actor CodexDesktopBridge {
             isQuestion: !$0.questions.isEmpty, context: $0.context, questions: $0.questions, desktopMethod: $0.method) }
         let state = reply.activity.flatMap(AIState.init(rawValue:)) ?? (reply.runtime == "active" ? .running : .unknown)
         let startedAt = reply.turnStartedAtMs.flatMap { $0.isFinite && $0 > 0 ? Date(timeIntervalSince1970: $0 / 1000) : nil }
-        return (requests, CodexLiveActivity(sessionID: session, turnID: reply.turnID, state: state, startedAt: startedAt), Set(reply.resolvedAsyncCallIDs ?? []))
+        return (requests, CodexLiveActivity(sessionID: session, turnID: reply.turnID, state: state, startedAt: startedAt), Set(reply.resolvedAsyncCallIDs ?? []), Set(reply.historicalAsyncCallIDs ?? []))
     }
     func respond(_ request: CodexPendingRequest, answers: [String: String] = [:], approve: Bool = false) async -> String {
         do {

@@ -302,6 +302,30 @@ enum CodexNativeBridge {
         return seen.subtracting(pendingCalls)
     }
 
+    /// Historical unanswered questions are hidden from the HUD only after a
+    /// newer turn exists and a complete snapshot proves their origin. This is
+    /// presentation only; no answer or cancellation is sent to Codex.
+    static func historicalAsyncCalls(_ state: [String: Any]) -> Set<String> {
+        guard let history = state["turnHistory"] as? [String: Any], history["kind"] as? String == "canonical",
+              let store = history["history"] as? [String: Any], store["isComplete"] as? Bool == true else { return [] }
+        let records = turns(state)
+        let timestamps = records.compactMap { ($0["turnStartedAtMs"] as? NSNumber)?.doubleValue }.filter { $0.isFinite && $0 > 0 }
+        guard let newest = timestamps.max(), timestamps.filter({ $0 == newest }).count == 1 else { return [] }
+        var oldCalls = Set<String>()
+        for turn in records {
+            guard turn["status"] as? String == "completed",
+                  let time = (turn["turnStartedAtMs"] as? NSNumber)?.doubleValue,
+                  time.isFinite, time > 0, time < newest else { continue }
+            for item in turn["items"] as? [[String: Any]] ?? [] {
+                guard item["type"] as? String == "agentMessage", item["delivery"] as? String == "async",
+                      let id = item["id"] as? String, let questions = item["questions"] as? [[String: Any]],
+                      !questions.isEmpty, questions.allSatisfy({ $0["title"] is String }) else { continue }
+                oldCalls.insert(id)
+            }
+        }
+        return oldCalls
+    }
+
     static func replyRequest(_ command: [String: Any], state: [String: Any], thread: String) throws -> (String, [String: Any]) {
         let matches = try pending(state).filter { $0["requestID"] as? String == command["requestID"] as? String }
         guard matches.count == 1, let request = matches.first, let rawID = request["rawID"], let method = request["method"] as? String else {
@@ -369,6 +393,7 @@ enum CodexNativeBridge {
         let latest = latestTurn(state)
         let requests = try pending(state)
         return try encode(["ok": true, "requests": requests, "resolvedAsyncCallIDs": Array(resolvedAsyncCalls(state, pending: requests)),
+                           "historicalAsyncCallIDs": Array(historicalAsyncCalls(state)),
                            "runtime": (state["threadRuntimeStatus"] as? [String: Any])?["type"] ?? "unknown",
                            "activity": executionState(state), "turnID": latest["turnId"] ?? NSNull(),
                            "turnStartedAtMs": latest["turnStartedAtMs"] ?? NSNull()])

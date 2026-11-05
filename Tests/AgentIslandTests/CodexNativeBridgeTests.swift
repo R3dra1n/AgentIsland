@@ -63,6 +63,19 @@ final class CodexNativeBridgeTests: XCTestCase {
         ]]]
         XCTAssertTrue(CodexNativeBridge.resolvedAsyncCalls(snapshot, pending: try CodexNativeBridge.pending(snapshot)).isEmpty)
     }
+
+    func testOnlyOlderCompletedAsyncQuestionsBecomeHistorical() {
+        func snapshot(complete: Bool, latestTime: Int) -> [String: Any] {
+            ["turnHistory": ["kind": "canonical", "history": ["isComplete": complete, "entitiesByKey": [
+                "old": ["turnId": "old", "turnStartedAtMs": 100, "status": "completed", "items": [question("old-call")]],
+                "latest": ["turnId": "latest", "turnStartedAtMs": latestTime, "status": "completed", "items": [question("current-call")]],
+                "active": ["turnId": "active", "turnStartedAtMs": 50, "status": "inProgress", "items": [question("active-call")]]
+            ]]]]
+        }
+        XCTAssertEqual(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: true, latestTime: 200)), ["old-call"])
+        XCTAssertTrue(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: false, latestTime: 200)).isEmpty)
+        XCTAssertTrue(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: true, latestTime: 100)).isEmpty)
+    }
     func testAsyncResponseCarriesRestoreContextAndUnicode() throws {
         var snapshot = state([question()]); snapshot["cwd"] = "/tmp/example"
         let request = try XCTUnwrap(CodexNativeBridge.pending(snapshot).first)
