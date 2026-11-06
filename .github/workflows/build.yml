@@ -1,4 +1,4 @@
-name: Test and package preview
+name: Test and package
 on:
   pull_request:
   push:
@@ -22,13 +22,13 @@ jobs:
         run: python3 scripts/check_public_source.py
       - name: Test Swift and Python
         run: bash scripts/test.sh
-      - name: Package universal developer preview
+      - name: Package universal build
         env:
           AGENTISLAND_UNIVERSAL: '1'
-        run: bash scripts/package_preview.sh
+        run: bash scripts/package.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: AgentIsland-macOS-preview
+          name: AgentIsland-macOS
           path: dist/*
   draft-release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: AgentIsland-macOS-preview
+          name: AgentIsland-macOS
           path: dist
       - uses: softprops/action-gh-release@v2
         with:
