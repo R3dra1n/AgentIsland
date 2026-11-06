@@ -57,11 +57,17 @@ struct AntigravityQuestion: Equatable, Sendable {
     }
 }
 
-enum AntigravityInteractionError: Error { case invalid }
+enum AntigravityInteractionError: Error {
+    case invalid
+    /// The trajectory was read and understood, and no step is waiting. That is
+    /// a different fact from a structure that cannot be trusted: the question
+    /// is simply not pending any more.
+    case noWaitingQuestion
+}
 
 enum AntigravityInteractionParser {
     static func parse(_ data: Data, cascadeID: UUID) throws -> AntigravityQuestion {
-        guard data.count <= 4 * 1024 * 1024,
+        guard data.count <= PinnedLoopbackHTTP.maximumResponse,
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let trajectory = root["trajectory"] as? [String: Any],
               let id = trajectory["trajectoryId"] as? String, let trajectoryID = UUID(uuidString: id),
@@ -69,6 +75,7 @@ enum AntigravityInteractionParser {
         let waiting = steps.enumerated().filter { _, step in
             step["status"] as? String == "CORTEX_STEP_STATUS_WAITING" && step["requestedInteraction"] is [String: Any]
         }
+        guard !waiting.isEmpty else { throw AntigravityInteractionError.noWaitingQuestion }
         guard waiting.count == 1 else { throw AntigravityInteractionError.invalid }
         let (index, step) = waiting[0]
         func emptyOrAbsent(_ value: Any?) -> Bool {

@@ -3,40 +3,6 @@ import SwiftUI
 import AppKit
 
 extension AppState {
-    // Manual test triggers
-    public func triggerTestState(_ state: AIState) {
-        testModeActive = true
-        
-        cursorState = cursorEnabled ? state : .idle
-        windsurfState = windsurfEnabled ? state : .idle
-        traeState = traeEnabled ? state : .idle
-        cursorNeedsAck = (cursorState == .completed)
-        windsurfNeedsAck = (windsurfState == .completed)
-        traeNeedsAck = (traeState == .completed)
-        cursorDescription = cursorState == .awaitingInput ? "等待审批: Command" : (cursorState == .running ? "分析代码中..." : (cursorState == .completed ? "完成" : "待命中"))
-        windsurfDescription = windsurfState == .awaitingInput ? "等待确认" : (windsurfState == .running ? "生成代码中..." : (windsurfState == .completed ? "完成" : "待命中"))
-        traeDescription = traeState == .awaitingInput ? "等待授权" : (traeState == .running ? "工作流运行中..." : (traeState == .completed ? "结束" : "待命中"))
-
-        aggregatedState = state
-        if state == .awaitingInput {
-            codexState = .awaitingInput
-            codexDescription = "测试: ask_question 确认"
-            if soundAlertEnabled { NSSound(named: "Ping")?.play() }
-        } else if state == .running {
-            codexState = .running
-            codexDescription = "测试: 执行 bash 脚本中..."
-        } else if state == .completed {
-            codexNeedsAck = true
-            codexState = .completed
-            codexDescription = "测试: 任务已完成"
-            if soundAlertEnabled { NSSound(named: "Glass")?.play() }
-        } else {
-            codexNeedsAck = false
-            codexState = .idle
-            codexDescription = "测试: 空闲"
-        }
-    }
-
     public func triggerMultiTest(state: AIState) {
         testModeActive = true
         

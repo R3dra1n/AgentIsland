@@ -49,4 +49,28 @@ final class AntigravityInteractionTests: XCTestCase {
         XCTAssertThrowsError(try AntigravityInteractionParser.parse(payload(question: ["question": "Choose", "selectedOptionIds": "invalid"]), cascadeID: cascade))
         XCTAssertThrowsError(try AntigravityInteractionParser.parse(payload(question: ["question": "Choose", "options": "invalid"]), cascadeID: cascade))
     }
+
+    // A trajectory holds every step ever taken, so long conversations are far
+    // larger than the old 4 MiB limit (a real one reached 56 MB). The parser
+    // must still find the single waiting step in one, and must still refuse a
+    // payload above the shared cap rather than parse without bound.
+    func testParsesATrajectoryAboveTheOldLimitAndRefusesOneAboveTheCap() throws {
+        let filler = String(repeating: "x", count: 1024)
+        var steps: [[String: Any]] = (0..<6000).map { _ in ["status": "CORTEX_STEP_STATUS_DONE", "pad": filler] }
+        let index = steps.count
+        steps.append(["status": "CORTEX_STEP_STATUS_WAITING",
+                      "requestedInteraction": ["askQuestion": ["questions": [["question": "Choose", "options": [["id": "one", "text": "First"]]]]]],
+                      "someMetadata": ["trajectoryId": trajectory.uuidString, "stepIndex": index]])
+        let data = try JSONSerialization.data(withJSONObject: ["trajectory": ["trajectoryId": trajectory.uuidString, "steps": steps]])
+        XCTAssertGreaterThan(data.count, 4 * 1024 * 1024, "夹具必须大于旧的 4 MiB 上限才有意义")
+        XCTAssertLessThan(data.count, PinnedLoopbackHTTP.maximumResponse)
+
+        let question = try AntigravityInteractionParser.parse(data, cascadeID: cascade)
+        XCTAssertEqual(question.stepIndex, index)
+        XCTAssertEqual(question.question, "Choose")
+
+        // The cap is a hard boundary: one byte over is refused before any parsing.
+        XCTAssertThrowsError(try AntigravityInteractionParser.parse(
+            Data(count: PinnedLoopbackHTTP.maximumResponse + 1), cascadeID: cascade))
+    }
 }

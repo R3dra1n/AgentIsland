@@ -351,53 +351,6 @@ public final class DirectActionEngine: Sendable {
         }
     }
     
-    private nonisolated func bounceFocusAndSendReturn(targetApp: NSRunningApplication) {
-        let previousApp = NSWorkspace.shared.frontmostApplication
-        
-        let switchBack: @Sendable () -> Void = {
-            if let prev = previousApp, prev.processIdentifier != targetApp.processIdentifier {
-                Thread.sleep(forTimeInterval: 0.05)
-                if #available(macOS 14.0, *), let url = prev.bundleURL {
-                    let config = NSWorkspace.OpenConfiguration()
-                    config.activates = true
-                    NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-                } else {
-                    prev.activate(options: .activateIgnoringOtherApps)
-                }
-            }
-        }
-        
-        let injectAction: @Sendable () -> Void = {
-            // Poll up to 10 times (0.5 seconds) to wait for the app to actually become active
-            for _ in 0..<10 {
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier == targetApp.processIdentifier {
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-            
-            // Add a tiny extra delay to let the app's event loop settle
-            Thread.sleep(forTimeInterval: 0.05)
-            self.sendKey(virtualKey: 36, targetPid: targetApp.processIdentifier) // Direct injection to PID
-            switchBack()
-        }
-
-        if #available(macOS 14.0, *), let url = targetApp.bundleURL {
-            let config = NSWorkspace.OpenConfiguration()
-            config.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
-                DispatchQueue.main.async {
-                    injectAction()
-                }
-            }
-        } else {
-            targetApp.activate(options: .activateIgnoringOtherApps)
-            DispatchQueue.main.async {
-                injectAction()
-            }
-        }
-    }
-
     nonisolated func sendTextInBackground(observerId: String, text: String, prefixKey: String? = nil, appState: AppState, expectedAntigravityDetail: String? = nil, expectedAntigravityIdentity: AntigravityPendingIdentity? = nil) {
         var canSend = true
         if observerId == "antigravity" {

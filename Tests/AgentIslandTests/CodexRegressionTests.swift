@@ -206,11 +206,69 @@ final class CodexRegressionTests: XCTestCase {
         value.consume(["payload": ["type": "task_complete", "turn_id": "t"]], source: "codex", date: now.addingTimeInterval(3))
         XCTAssertEqual(value.visibleState(now: now.addingTimeInterval(3600)), .awaitingInput)
         XCTAssertEqual(value.asyncRequests, ["call_123"])
+        // A newer turn makes the unanswered question history. It stays through
+        // the end of its own turn (asserted above) but not through the next one.
         value.consume(["payload": ["type": "task_started", "turn_id": "next"]], source: "codex", date: now.addingTimeInterval(4))
-        XCTAssertEqual(value.state, .awaitingInput)
-        value.consume(try structuredReply([("call_123", 0)]), source: "codex", date: now.addingTimeInterval(5))
-        XCTAssertTrue(value.asyncRequests.isEmpty)
         XCTAssertEqual(value.state, .running)
+        XCTAssertTrue(value.asyncRequests.isEmpty)
+        XCTAssertTrue(value.pendingRequests.isEmpty)
+        // It is remembered, so a later explicit answer is still recorded for
+        // reconciling a hook stream.
+        XCTAssertEqual(value.supersededAsyncRequests, ["call_123"])
+        value.consume(try structuredReply([("call_123", 0)]), source: "codex", date: now.addingTimeInterval(5))
+        XCTAssertEqual(value.resolvedAsyncRequestIDs, ["call_123"])
+        XCTAssertTrue(value.supersededAsyncRequests.isEmpty)
+        XCTAssertEqual(value.state, .running)
+    }
+
+    // The reported defect: a long conversation raised an async question in many
+    // turns and never answered them. Every one stayed on screen, so the HUD
+    // showed a pile of old questions with no way to tell which was current.
+    func testOnlyTheLatestTurnsUnansweredQuestionsRemainAfterManyTurns() {
+        var value = SessionState()
+        for turn in 1...5 {
+            value.consume(["payload": ["type": "task_started", "turn_id": "t\(turn)"]], source: "codex",
+                          date: now.addingTimeInterval(Double(turn * 10)))
+            value.consume(call("request_user_input_async", id: "call_\(turn)"), source: "codex",
+                          date: now.addingTimeInterval(Double(turn * 10 + 1)))
+            value.consume(["payload": ["type": "task_complete", "turn_id": "t\(turn)"]], source: "codex",
+                          date: now.addingTimeInterval(Double(turn * 10 + 2)))
+        }
+        XCTAssertEqual(value.pendingRequests, ["call_5"], "只有最新轮次中真正未答的问题应保留")
+        XCTAssertEqual(value.supersededAsyncRequests, ["call_1", "call_2", "call_3", "call_4"])
+        XCTAssertEqual(value.visibleState(now: now.addingTimeInterval(3600)), .awaitingInput)
+    }
+
+    // A conversation that has moved on and has nothing current waiting must not
+    // keep reading as waiting: this is what let old questions paint it red.
+    func testSessionIsNotWaitingOnceTheConversationMovedOnWithoutANewQuestion() {
+        var value = SessionState()
+        value.consume(["payload": ["type": "task_started", "turn_id": "old"]], source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "call_old"), source: "codex", date: now.addingTimeInterval(1))
+        value.consume(["payload": ["type": "task_complete", "turn_id": "old"]], source: "codex", date: now.addingTimeInterval(2))
+        XCTAssertEqual(value.state, .awaitingInput)
+        value.consume(["payload": ["type": "task_started", "turn_id": "new"]], source: "codex", date: now.addingTimeInterval(3))
+        value.consume(["payload": ["type": "task_complete", "turn_id": "new"]], source: "codex", date: now.addingTimeInterval(4))
+        XCTAssertEqual(value.state, .completed)
+        XCTAssertTrue(value.pendingRequests.isEmpty)
+    }
+
+    // Superseding needs proof the new turn is newer. Without turn ids on both
+    // sides there is none, so the question is kept rather than guessed away.
+    func testQuestionIsKeptWhenNewerTurnCannotBeProven() {
+        var value = SessionState()
+        value.consume(["payload": ["type": "task_started"]], source: "codex", date: now)
+        value.consume(call("request_user_input_async", id: "call_x"), source: "codex", date: now.addingTimeInterval(1))
+        value.consume(["payload": ["type": "task_complete"]], source: "codex", date: now.addingTimeInterval(2))
+        value.consume(["payload": ["type": "task_started"]], source: "codex", date: now.addingTimeInterval(3))
+        XCTAssertEqual(value.pendingRequests, ["call_x"])
+        XCTAssertTrue(value.supersededAsyncRequests.isEmpty)
+        // A repeated start of the same turn is not a newer turn either.
+        var repeated = SessionState()
+        repeated.consume(["payload": ["type": "task_started", "turn_id": "same"]], source: "codex", date: now)
+        repeated.consume(call("request_user_input_async", id: "call_y"), source: "codex", date: now.addingTimeInterval(1))
+        repeated.consume(["payload": ["type": "task_started", "turn_id": "same"]], source: "codex", date: now.addingTimeInterval(2))
+        XCTAssertEqual(repeated.pendingRequests, ["call_y"])
     }
 
     func testStructuredRepliesResolveAllMatchingCallsAndKeepPartialMultiQuestion() throws {

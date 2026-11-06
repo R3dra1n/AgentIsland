@@ -8,6 +8,11 @@ struct SessionState: Sendable {
     var pendingRequests: Set<String> = []
     var asyncRequests: Set<String> = []
     var asyncUnansweredIndexes: [String: Set<Int>] = [:]
+    /// Async questions raised in a turn that a newer turn has since followed.
+    /// They are history: no longer shown and no longer counted as waiting. They
+    /// are remembered only so that a later explicit answer is still recorded
+    /// for reconciling a separate hook stream.
+    var supersededAsyncRequests: Set<String> = []
     // Only explicitly identified answers may reconcile a separate hook stream.
     var resolvedAsyncRequestIDs: Set<String> = []
     var inputRequests: Set<String> = []
@@ -43,6 +48,7 @@ struct SessionState: Sendable {
            let content = payload["content"] as? [[String: Any]],
            let text = content.compactMap({ $0["text"] as? String }).first(where: { $0.contains("<send_user_message_question_reply>") }) {
             for (id, index) in Self.asyncReplyIdentities(text) {
+                if supersededAsyncRequests.contains(id) { recordExplicitAsyncResolution(id); continue }
                 guard asyncRequests.contains(id), var remaining = asyncUnansweredIndexes[id], remaining.remove(index) != nil else { continue }
                 if remaining.isEmpty {
                     recordExplicitAsyncResolution(id)
@@ -56,8 +62,21 @@ struct SessionState: Sendable {
         if starts {
             if let incomingTurn, seenTurns.contains(incomingTurn), incomingTurn != turnID { return }
             if let incomingTurn { seenTurns.insert(incomingTurn) }
+            let previousTurn = turnID
             turnID = incomingTurn
-            let waitingForAsync = source == "codex" && retainOutstandingAsyncQuestions()
+            // Questions survive the end of their own turn, which is what lets one
+            // be answered long after its turn finished. They do not survive a
+            // newer turn: once the conversation has moved on, an unanswered
+            // question is history, and keeping every one from a 70-turn
+            // conversation buried the question that is actually current.
+            // Superseding needs proof that the new turn really is newer, so a
+            // missing turn id keeps the question rather than guessing.
+            let provablyNewer = incomingTurn != nil && previousTurn != nil && incomingTurn != previousTurn
+            if source == "codex" && provablyNewer {
+                if supersededAsyncRequests.count + asyncRequests.count >= 256 { supersededAsyncRequests.removeAll() }
+                supersededAsyncRequests.formUnion(asyncRequests)
+            }
+            let waitingForAsync = source == "codex" && !provablyNewer && retainOutstandingAsyncQuestions()
             if !waitingForAsync {
                 pendingRequests.removeAll()
                 asyncRequests.removeAll()
@@ -75,7 +94,7 @@ struct SessionState: Sendable {
         }
         if let incomingTurn, let turnID, incomingTurn != turnID {
             if source == "codex", ["request_resolved", "user_input_resolved"].contains(kind),
-               let id = payload["request_id"] as? String, asyncRequests.contains(id) {
+               let id = payload["request_id"] as? String, asyncRequests.contains(id) || supersededAsyncRequests.contains(id) {
                 recordExplicitAsyncResolution(id)
                 resolveRequest(id)
                 transition(pendingRequests.isEmpty ? .running : .awaitingInput, date)
@@ -384,7 +403,8 @@ struct SessionState: Sendable {
     }
 
     private mutating func recordExplicitAsyncResolution(_ id: String) {
-        guard asyncRequests.contains(id) else { return }
+        guard asyncRequests.contains(id) || supersededAsyncRequests.contains(id) else { return }
+        supersededAsyncRequests.remove(id)
         // Bound the reconciliation history; call IDs are unique in normal use.
         if resolvedAsyncRequestIDs.count >= 256 { resolvedAsyncRequestIDs.removeAll() }
         resolvedAsyncRequestIDs.insert(id)
@@ -422,7 +442,7 @@ struct SessionState: Sendable {
     }
 }
 
-struct AntigravityPendingIdentity: Equatable, Sendable {
+struct AntigravityPendingIdentity: Hashable, Sendable {
     let transcript: URL
     let fileID: UInt64
     let changedAt: Date
@@ -462,6 +482,7 @@ struct ObserverSnapshot: Sendable {
     var antigravityPendingSessions: Int = 0
     var antigravityPendingIdentity: AntigravityPendingIdentity?
     var antigravitySessions: [AntigravitySessionSnapshot] = []
+    var claudeSessions: [ClaudeSessionSnapshot] = []
 }
 
 /// Keeps incomplete UTF-8/JSON records across reads. All offsets belong to this reader.

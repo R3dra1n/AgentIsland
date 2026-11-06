@@ -48,8 +48,11 @@ final class AntigravitySessionPresentationTests: XCTestCase {
         let labels = [first.id: 1, second.id: 2]
         let viewed = AppState.expandAntigravitySessions([provider("antigravity")], sessions: [first, second],
             feedback: [:], labels: labels, acknowledged: [first.id: now])
-        XCTAssertEqual(viewed.map(\.state), [.idle, .completed])
-        XCTAssertEqual(viewed.first?.description, "待命中")
+        // The viewed one no longer takes a row. The one left is alone, so it shows
+        // under the assistant's plain name rather than as "会话 2".
+        XCTAssertEqual(viewed.map(\.state), [.completed])
+        XCTAssertEqual(viewed.map(\.id), [AppState.antigravitySessionPrefix + second.id])
+        XCTAssertEqual(viewed.first?.name, "antigravity")
         let newCompletion = session(first.id, .completed, lastActiveDate: now.addingTimeInterval(1))
         let waiting = session(second.id, .awaitingInput, lastActiveDate: now)
         let changed = AppState.expandAntigravitySessions([provider("antigravity")], sessions: [newCompletion, waiting],

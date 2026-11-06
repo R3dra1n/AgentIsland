@@ -26,6 +26,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Length', str(4 * 1024 * 1024 + 1))
             self.end_headers()
+        elif mode == 'large':
+            total = 6 * 1024 * 1024
+            self.send_response(200)
+            self.send_header('Content-Length', str(total))
+            self.end_headers()
+            sent = 0
+            try:
+                while sent < total:
+                    n = min(65536, total - sent)
+                    self.wfile.write(b'x' * n)
+                    sent += n
+            except (BrokenPipeError, ConnectionResetError, ssl.SSLError): pass
         elif mode == 'oversized-stream':
             self.send_response(200)
             self.send_header('Connection', 'close')
@@ -174,10 +186,64 @@ server.serve_forever()
             let server = try fixture.server(certificate, mode: mode)
             do {
                 _ = try await PinnedLoopbackHTTP.post(port: server.port, certificate: certificate.der,
-                    method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil)
-                XCTFail("A response larger than 4 MiB must be rejected")
+                    method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil,
+                    maximumResponse: 4 * 1024 * 1024)
+                XCTFail("A response larger than the configured cap must be rejected (\(mode))")
             } catch {}
         }
+    }
+
+    // A conversation's trajectory grows with every step; a real one reached
+    // 56 MB. The default cap must let a response far above the old 4 MiB limit
+    // through, both with a declared length and when streamed without one.
+    func testDefaultCapAcceptsResponsesAboveTheOldFourMebibyteLimit() async throws {
+        let fixture = try Fixture()
+        let certificate = try fixture.certificate("valid")
+        XCTAssertGreaterThanOrEqual(PinnedLoopbackHTTP.maximumResponse, 56 * 1024 * 1024,
+                                    "上限必须高于已观察到的最大 trajectory（56 MB）")
+        let declared = try fixture.server(certificate, mode: "large")
+        let large = try await PinnedLoopbackHTTP.post(port: declared.port, certificate: certificate.der,
+            method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil)
+        XCTAssertEqual(large.status, 200)
+        XCTAssertEqual(large.body.count, 6 * 1024 * 1024)
+
+        let streamed = try fixture.server(certificate, mode: "oversized-stream")
+        let result = try await PinnedLoopbackHTTP.post(port: streamed.port, certificate: certificate.der,
+            method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil)
+        XCTAssertEqual(result.body.count, 65 * 65536)
+    }
+
+    // The cap is inclusive: exactly the cap is accepted and one byte more is
+    // refused, so raising it never silently turns into "no limit".
+    func testCapBoundaryIsExactForStreamedResponses() async throws {
+        let fixture = try Fixture()
+        let certificate = try fixture.certificate("valid")
+        let exact = 65 * 65536
+        let atLimit = try fixture.server(certificate, mode: "oversized-stream")
+        let accepted = try await PinnedLoopbackHTTP.post(port: atLimit.port, certificate: certificate.der,
+            method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil, maximumResponse: exact)
+        XCTAssertEqual(accepted.body.count, exact)
+
+        let overLimit = try fixture.server(certificate, mode: "oversized-stream")
+        do {
+            _ = try await PinnedLoopbackHTTP.post(port: overLimit.port, certificate: certificate.der,
+                method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil, maximumResponse: exact - 1)
+            XCTFail("One byte over the cap must be rejected")
+        } catch PinnedLoopbackHTTP.Failure.invalidResponse {
+        } catch { XCTFail("Expected the cap failure, got \(error)") }
+    }
+
+    func testCapRejectsADeclaredLengthWithoutReadingTheBody() async throws {
+        let fixture = try Fixture()
+        let certificate = try fixture.certificate("valid")
+        let server = try fixture.server(certificate, mode: "large")
+        do {
+            _ = try await PinnedLoopbackHTTP.post(port: server.port, certificate: certificate.der,
+                method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: nil,
+                maximumResponse: 1024 * 1024)
+            XCTFail("A declared length above the cap must be rejected")
+        } catch PinnedLoopbackHTTP.Failure.unsafe {
+        } catch { XCTFail("Expected the declared-length failure, got \(error)") }
     }
 
     func testRedirectIsNotFollowedAndCredentialDoesNotReachSecondServer() async throws {
@@ -223,7 +289,8 @@ server.serve_forever()
         let request = Task { () -> Int? in
             do {
                 _ = try await PinnedLoopbackHTTP.post(port: port, certificate: der,
-                    method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: token)
+                    method: "GetCascadeTrajectory", body: Data("{}".utf8), credential: token,
+                    resourceTimeout: 10)
                 return nil
             } catch {
                 return (error as? URLError)?.code.rawValue

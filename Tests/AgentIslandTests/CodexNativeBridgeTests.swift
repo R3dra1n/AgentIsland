@@ -73,7 +73,13 @@ final class CodexNativeBridgeTests: XCTestCase {
             ]]]]
         }
         XCTAssertEqual(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: true, latestTime: 200)), ["old-call"])
-        XCTAssertTrue(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: false, latestTime: 200)).isEmpty)
+        // A partial snapshot must behave identically: "a strictly newer turn
+        // exists" cannot be falsified by turns that failed to load, and
+        // requiring completeness here left historical questions on screen.
+        XCTAssertEqual(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: false, latestTime: 200)), ["old-call"])
+        // Nothing is strictly older than the newest start time, so the tie
+        // between "old" and "latest" hides neither, and the in-progress turn
+        // is never historical.
         XCTAssertTrue(CodexNativeBridge.historicalAsyncCalls(snapshot(complete: true, latestTime: 100)).isEmpty)
     }
     func testAsyncResponseCarriesRestoreContextAndUnicode() throws {

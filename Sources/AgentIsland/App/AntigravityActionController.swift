@@ -14,7 +14,7 @@ struct AntigravityPreparedQuestion: Equatable, Sendable {
 
 private enum AntigravityPreparationResult: Sendable {
     case ready(AntigravityPreparedQuestion)
-    case connectionUnavailable, unsupportedVersion, queryFailed, unsupportedQuestion, detailMismatch
+    case connectionUnavailable, unsupportedVersion, queryFailed, unsupportedQuestion, detailMismatch, noLongerWaiting
 
     var failureMessage: String {
         switch self {
@@ -24,6 +24,7 @@ private enum AntigravityPreparationResult: Sendable {
         case .queryFailed: return "无法读取此会话的问题，请在 Antigravity 处理"
         case .unsupportedQuestion: return "问题结构无法确认，请在 Antigravity 处理"
         case .detailMismatch: return "显示的问题与会话不一致，请在 Antigravity 处理"
+        case .noLongerWaiting: return "此问题已不在 Antigravity 中等待"
         }
     }
 }
@@ -39,6 +40,24 @@ enum AntigravityActionController {
     private static var automaticTasks: Set<String> = []
     private static var automaticPrepared: Set<String> = []
     private static var automaticAttempts: [String: AntigravityPrevalidationTarget] = [:]
+    /// When each session's feedback message was written. A preparation that
+    /// fails leaves the in-flight maps immediately, so without an explicit
+    /// expiry nothing ever clears its message and it stays on screen for the
+    /// life of the app — long after the session stopped waiting.
+    private static var feedbackSetAt: [String: Date] = [:]
+    /// Kept briefly after a session stops waiting so a send confirmation is
+    /// still readable before it disappears.
+    nonisolated static let feedbackGrace: TimeInterval = 10
+    /// A question is only treated as no longer waiting once it has stood this
+    /// long without the server listing it. Just after it is asked, the server's
+    /// view can lag the transcript, and treating that lag as an ending would
+    /// hide a question that is genuinely waiting.
+    nonisolated static let endedQuestionGrace: TimeInterval = 60
+    private static var recheckAt: [String: Date] = [:]
+
+    nonisolated static func shouldTreatQuestionAsEnded(since changedAt: Date, now: Date) -> Bool {
+        now.timeIntervalSince(changedAt) >= endedQuestionGrace
+    }
     // Contains no credential or question; only retained in memory after the
     // user has explicitly enabled local replies.
     private static var cachedEndpoint: AntigravityLocalTransport.Endpoint?
@@ -65,7 +84,7 @@ enum AntigravityActionController {
               current.state == .awaitingInput, current.pendingIdentity == expectedIdentity, current.actionDetail == expectedDetail,
               let cascade = cascadeID(for: expectedIdentity.transcript),
               (automatic ? (state.antigravityPrevalidationEnabled && UserDefaults.standard.bool(forKey: consentKey)) : consent()) else {
-            state.antigravitySessionFeedback[sessionID] = "问题已变化或尚未授权，请在原应用确认"
+            setFeedback(state: state, sessionID: sessionID, "问题已变化或尚未授权，请在原应用确认")
             return
         }
         // The authorization dialog can run a nested event loop; check again.
@@ -73,10 +92,10 @@ enum AntigravityActionController {
               afterConsent.state == .awaitingInput, afterConsent.pendingIdentity == expectedIdentity,
               afterConsent.actionDetail == expectedDetail, preparationIDs[sessionID] == requestID,
               UserDefaults.standard.bool(forKey: consentKey), (!automatic || state.antigravityPrevalidationEnabled) else {
-            state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开"
+            setFeedback(state: state, sessionID: sessionID, "问题已变化，请重新打开")
             return
         }
-        state.antigravitySessionFeedback[sessionID] = "正在验证此会话的问题…"
+        setFeedback(state: state, sessionID: sessionID, "正在验证此会话的问题…")
         preparationTargets[sessionID] = target
         if automatic { automaticTasks.insert(sessionID) }
         let previousEndpoint = cachedEndpoint
@@ -96,6 +115,7 @@ enum AntigravityActionController {
             } catch { return .queryFailed }
             let question: AntigravityQuestion
             do { question = try AntigravityInteractionParser.parse(data, cascadeID: cascade) }
+            catch AntigravityInteractionError.noWaitingQuestion { return .noLongerWaiting }
             catch { return .unsupportedQuestion }
             guard !Task.isCancelled, question.matchesDisplayedDetail(expectedDetail) else { return .detailMismatch }
             return .ready(AntigravityPreparedQuestion(identity: expectedIdentity, detail: expectedDetail, question: question, endpoint: endpoint))
@@ -112,12 +132,28 @@ enum AntigravityActionController {
             guard latest?.state == .awaitingInput, latest?.pendingIdentity == expectedIdentity,
                   latest?.actionDetail == expectedDetail, UserDefaults.standard.bool(forKey: consentKey),
                   (!wasAutomatic || state.antigravityPrevalidationEnabled) else {
-                state.antigravitySessionFeedback[sessionID] = "问题已变化，请重新打开后确认"
+                setFeedback(state: state, sessionID: sessionID, "问题已变化，请重新打开后确认")
+                return
+            }
+            if case .noLongerWaiting = result {
+                if shouldTreatQuestionAsEnded(since: expectedIdentity.changedAt, now: Date()) {
+                    // The server read fine and lists nothing waiting, long enough
+                    // after the question was asked: it was cancelled or its
+                    // conversation was closed. Stop showing it as waiting.
+                    recheckAt.removeValue(forKey: sessionID)
+                    state.antigravitySessionFeedback.removeValue(forKey: sessionID)
+                    feedbackSetAt.removeValue(forKey: sessionID)
+                    state.antigravityObserver.markQuestionEnded(expectedIdentity)
+                } else {
+                    // Too soon to tell lag from an ending: look once more later.
+                    recheckAt[sessionID] = expectedIdentity.changedAt.addingTimeInterval(endedQuestionGrace)
+                    setFeedback(state: state, sessionID: sessionID, "正在确认此问题是否仍在等待…")
+                }
                 return
             }
             guard case .ready(let prepared) = result else {
                 if case .queryFailed = result, cachedEndpoint == previousEndpoint { cachedEndpoint = nil }
-                state.antigravitySessionFeedback[sessionID] = result.failureMessage
+                setFeedback(state: state, sessionID: sessionID, result.failureMessage)
                 return
             }
             cachedEndpoint = prepared.endpoint
@@ -135,6 +171,7 @@ enum AntigravityActionController {
         automaticPrepared.remove(sessionID)
         state.antigravityPreparedQuestions.removeValue(forKey: sessionID)
         state.antigravitySessionFeedback.removeValue(forKey: sessionID)
+        feedbackSetAt.removeValue(forKey: sessionID)
     }
 
     static func setPrevalidation(_ enabled: Bool, state: AppState) {
@@ -161,6 +198,21 @@ enum AntigravityActionController {
         automaticAttempts.removeAll()
     }
 
+    private static func setFeedback(state: AppState, sessionID: String, _ message: String) {
+        state.antigravitySessionFeedback[sessionID] = message
+        feedbackSetAt[sessionID] = Date()
+    }
+
+    /// Sessions whose feedback no longer describes anything: the session has
+    /// stopped waiting (or disappeared) and the grace period has passed.
+    nonisolated static func expiredFeedbackSessions(shown: Set<String>, writtenAt: [String: Date],
+                                        activeTargets: Set<String>, now: Date) -> [String] {
+        shown.filter { id in
+            guard !activeTargets.contains(id) else { return false }
+            return now.timeIntervalSince(writtenAt[id] ?? .distantPast) > feedbackGrace
+        }.sorted()
+    }
+
     /// Never auto-send. Skip ambiguous sessions and bound concurrent reads.
     static func refreshPrevalidation(state: AppState) {
         let sessions = state.antigravityObserver.sessions
@@ -169,6 +221,16 @@ enum AntigravityActionController {
         })
         for id in Array(automaticAttempts.keys) where automaticAttempts[id] != targets[id] {
             automaticAttempts.removeValue(forKey: id)
+        }
+        for (id, due) in recheckAt {
+            if targets[id] == nil { recheckAt.removeValue(forKey: id) }
+            else if Date() >= due { recheckAt.removeValue(forKey: id); automaticAttempts.removeValue(forKey: id) }
+        }
+        for id in expiredFeedbackSessions(shown: Set(state.antigravitySessionFeedback.keys),
+                                          writtenAt: feedbackSetAt,
+                                          activeTargets: Set(targets.keys), now: Date()) {
+            state.antigravitySessionFeedback.removeValue(forKey: id)
+            feedbackSetAt.removeValue(forKey: id)
         }
         for id in Array(preparationTargets.keys) where preparationTargets[id] != targets[id] {
             discard(state: state, sessionID: id)
@@ -197,7 +259,7 @@ enum AntigravityActionController {
                        expectedIdentity: AntigravityPendingIdentity? = nil, expectedDetail: String? = nil,
                        expectedQuestion: AntigravityQuestion? = nil) {
         func feedback(_ message: String) {
-            if let sessionID { state.antigravitySessionFeedback[sessionID] = message }
+            if let sessionID { setFeedback(state: state, sessionID: sessionID, message) }
             else { state.antigravityDescription = message }
         }
         guard !state.antigravityActionInFlight else {
@@ -313,7 +375,7 @@ enum AntigravityActionController {
         activeWorker?.cancel()
         for (id, task) in preparationTasks {
             task.cancel()
-            state.antigravitySessionFeedback[id] = "已撤销后台回复授权"
+            setFeedback(state: state, sessionID: id, "已撤销后台回复授权")
         }
         preparationTasks.removeAll()
         preparationIDs.removeAll()
@@ -321,6 +383,7 @@ enum AntigravityActionController {
         automaticTasks.removeAll()
         automaticPrepared.removeAll()
         automaticAttempts.removeAll()
+        recheckAt.removeAll()
         state.antigravityPreparedQuestions.removeAll()
     }
 }

@@ -212,6 +212,17 @@ enum CodexNativeBridge {
         turns(state).filter { $0["turnId"] as? String != nil }
             .max { ($0["turnStartedAtMs"] as? NSNumber)?.doubleValue ?? 0 < ($1["turnStartedAtMs"] as? NSNumber)?.doubleValue ?? 0 } ?? [:]
     }
+    /// A turn in any of these states will not resume, so its unanswered async
+    /// questions cannot become current again. Both reconciliation paths share
+    /// this list so they cannot disagree about what "ended" means.
+    static let endedTurnStatuses: Set<String> = ["completed", "failed", "interrupted", "aborted"]
+
+    /// A usable turn start time, or nil when it is absent or not a real number.
+    static func startedAt(_ turn: [String: Any]) -> Double? {
+        guard let number = turn["turnStartedAtMs"] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite, number.doubleValue > 0 else { return nil }
+        return number.doubleValue
+    }
     static func executionState(_ state: [String: Any]) -> String {
         let runtime = (state["threadRuntimeStatus"] as? [String: Any])?["type"] as? String
         if runtime == "active" { return "running" }
@@ -291,7 +302,7 @@ enum CodexNativeBridge {
         }
         var seen = Set<String>()
         for turn in turns(state) {
-            guard ["completed", "failed", "interrupted"].contains(turn["status"] as? String ?? "") else { continue }
+            guard endedTurnStatuses.contains(turn["status"] as? String ?? "") else { continue }
             for item in turn["items"] as? [[String: Any]] ?? [] {
                 guard item["type"] as? String == "agentMessage", item["delivery"] as? String == "async",
                       let id = item["id"] as? String, let questions = item["questions"] as? [[String: Any]],
@@ -302,20 +313,28 @@ enum CodexNativeBridge {
         return seen.subtracting(pendingCalls)
     }
 
-    /// Historical unanswered questions are hidden from the HUD only after a
-    /// newer turn exists and a complete snapshot proves their origin. This is
-    /// presentation only; no answer or cancellation is sent to Codex.
+    /// Historical unanswered questions are hidden from the HUD once a strictly
+    /// newer turn exists and the question's own turn has ended.
+    ///
+    /// "A strictly newer turn exists" is positive evidence: a partial snapshot
+    /// can omit turns but never invent them, so a newer turn we can actually
+    /// see is newer regardless of what else failed to load. Completeness is
+    /// therefore not required here — unlike `resolvedAsyncCalls`, which proves
+    /// the opposite (that nothing in the transcript answered a question) and
+    /// does need the full history. Requiring it here made this function return
+    /// nothing in the common partial-snapshot case.
+    ///
+    /// Presentation only: no answer or cancellation is ever sent to Codex.
     static func historicalAsyncCalls(_ state: [String: Any]) -> Set<String> {
-        guard let history = state["turnHistory"] as? [String: Any], history["kind"] as? String == "canonical",
-              let store = history["history"] as? [String: Any], store["isComplete"] as? Bool == true else { return [] }
         let records = turns(state)
-        let timestamps = records.compactMap { ($0["turnStartedAtMs"] as? NSNumber)?.doubleValue }.filter { $0.isFinite && $0 > 0 }
-        guard let newest = timestamps.max(), timestamps.filter({ $0 == newest }).count == 1 else { return [] }
+        // Without a comparable timestamp there is no evidence of ordering, so
+        // nothing may be hidden. Ties are excluded by the strict comparison
+        // below rather than by abandoning the whole snapshot.
+        guard let newest = records.compactMap({ startedAt($0) }).max() else { return [] }
         var oldCalls = Set<String>()
         for turn in records {
-            guard turn["status"] as? String == "completed",
-                  let time = (turn["turnStartedAtMs"] as? NSNumber)?.doubleValue,
-                  time.isFinite, time > 0, time < newest else { continue }
+            guard endedTurnStatuses.contains(turn["status"] as? String ?? ""),
+                  let time = startedAt(turn), time < newest else { continue }
             for item in turn["items"] as? [[String: Any]] ?? [] {
                 guard item["type"] as? String == "agentMessage", item["delivery"] as? String == "async",
                       let id = item["id"] as? String, let questions = item["questions"] as? [[String: Any]],

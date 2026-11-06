@@ -48,14 +48,30 @@ public struct FloatingHUDView: View {
 
     @ViewBuilder
     private func segment(_ item: AIObserverItem) -> some View {
-        let provider = item.icon == "antigravity" ? "antigravity" : item.id
+        if item.id.hasPrefix(AppState.overflowPrefix) {
+            OverflowChipView(appState: appState, item: item)
+        } else {
+            sessionSegment(item)
+        }
+    }
+
+    @ViewBuilder
+    private func sessionSegment(_ item: AIObserverItem) -> some View {
+        let claudeSessionRow = item.id.hasPrefix(AppState.claudeSessionPrefix)
+        let provider = item.icon == "antigravity" ? "antigravity" : (claudeSessionRow ? "claude" : item.id)
         let sessionRow = item.id.hasPrefix(AppState.antigravitySessionPrefix)
         AISegmentView(appState: appState, item: item, isPulsing: isPulsing,
-            onApprove: { appState.approve(for: provider) },
-            onReject: { appState.reject(for: provider) },
+            // With several Claude Code conversations a blind keystroke cannot
+            // be aimed at the right one, so a conversation's row only brings
+            // the original window forward instead of approving by key press.
+            onApprove: { claudeSessionRow ? appState.focusApp(for: "claude") : appState.approve(for: provider) },
+            onReject: { claudeSessionRow ? appState.focusApp(for: "claude") : appState.reject(for: provider) },
             onFocus: { appState.focusApp(for: provider) },
             onAcknowledge: {
-                if provider == "codex" { appState.acknowledgeCodex() }
+                if provider == "claude", claudeSessionRow {
+                    appState.acknowledgeClaudeSession(String(item.id.dropFirst(AppState.claudeSessionPrefix.count)))
+                }
+                else if provider == "codex" { appState.acknowledgeCodex() }
                 else if provider == "antigravity", sessionRow {
                     appState.acknowledgeAntigravitySession(String(item.id.dropFirst(AppState.antigravitySessionPrefix.count)))
                 }
@@ -155,6 +171,77 @@ public struct FloatingHUDView: View {
     }
 }
 
+/// The "+N" mark for conversations that did not fit in an assistant's rows. It
+/// takes the colour of the worst state it hides, so a conversation that needs
+/// the user is never buried, and opens a list of what it holds.
+private struct OverflowChipView: View {
+    @ObservedObject var appState: AppState
+    let item: AIObserverItem
+    @State private var showList = false
+
+    private var providerID: String { String(item.id.dropFirst(AppState.overflowPrefix.count)) }
+
+    var body: some View {
+        Button { showList.toggle() } label: {
+            HStack(spacing: 6) {
+                ZStack {
+                    Circle().fill(item.state.color.opacity(0.2)).frame(width: 26, height: 26)
+                    AIIconView(provider: item.icon, size: 14, color: item.state.color)
+                }
+                Text(item.name)
+                    .font(.system(size: 11, weight: .bold))
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(item.state.color.opacity(0.2))
+                    .foregroundColor(item.state.color)
+                    .clipShape(Capsule())
+            }
+        }
+        .buttonStyle(.plain)
+        .help("\(item.description)，点击查看")
+        .popover(isPresented: $showList, arrowEdge: .bottom) {
+            OverflowSessionListView(appState: appState, providerID: providerID)
+        }
+    }
+}
+
+private struct OverflowSessionListView: View {
+    @ObservedObject var appState: AppState
+    let providerID: String
+
+    var body: some View {
+        let rows = appState.hiddenSessionRows(for: providerID)
+        VStack(alignment: .leading, spacing: 8) {
+            Text("其余会话").font(.system(size: 12, weight: .bold))
+            Divider()
+            if rows.isEmpty {
+                Text("没有其他需要注意的会话").font(.system(size: 11)).foregroundColor(.secondary)
+            }
+            ForEach(rows) { row in
+                HStack(spacing: 8) {
+                    Circle().fill(row.state.color).frame(width: 8, height: 8)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(row.name).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                        Text("\(row.state.title) · \(row.description)")
+                            .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if row.state == .completed {
+                        Button("已查看") { appState.acknowledgeSessionRow(row) }
+                            .controlSize(.mini).buttonStyle(.bordered)
+                    } else if row.state == .awaitingInput {
+                        // Answering needs the conversation's own panel, which a
+                        // folded row does not have, so go to the original window.
+                        Button("打开处理") { appState.focusApp(for: providerID) }
+                            .controlSize(.mini).buttonStyle(.borderedProminent).tint(.red)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 320, alignment: .leading)
+    }
+}
+
 public struct AISegmentView: View {
     @ObservedObject var appState: AppState
     let item: AIObserverItem
@@ -170,6 +257,7 @@ public struct AISegmentView: View {
     @State private var presentedQuestion: AntigravityQuestion?
 
     private var isAntigravity: Bool { item.icon == "antigravity" || item.id == "antigravity" }
+    private var isClaudeSession: Bool { item.id.hasPrefix(AppState.claudeSessionPrefix) }
     private var rowSessionID: String? {
         guard item.id.hasPrefix(AppState.antigravitySessionPrefix) else { return nil }
         return String(item.id.dropFirst(AppState.antigravitySessionPrefix.count))
@@ -233,6 +321,13 @@ public struct AISegmentView: View {
                 // Keep the first verified question for this panel open; a later
                 // response can only pass if the controller revalidates it.
                 presentedQuestion = question
+            }
+        } else if isClaudeSession {
+            VStack(alignment: .leading, spacing: 5) {
+                ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: false,
+                                    showsDisabledActions: true, onChoose: nil, onSend: nil)
+                Text("同时有多个 Claude Code 会话时，无法确认回复会送到哪一个，请在对应的终端或窗口中回答。")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
             }
         } else {
             ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: true,
@@ -333,7 +428,7 @@ public struct AISegmentView: View {
                 }
             } else if appState.hudDetailMode == .concise && item.state != .idle {
                 HStack(spacing: 4) {
-                    if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
+                    if item.id.hasPrefix(AppState.antigravitySessionPrefix) || isClaudeSession {
                         Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
                     }
                     Group {
@@ -374,7 +469,7 @@ public struct AISegmentView: View {
                         HStack(spacing: 3) {
                             Image(systemName: "checkmark.circle.fill")
                                 .font(.system(size: 9, weight: .bold))
-                            Text(item.id == "codex" ? "处理请求" : ((isAntigravity || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"))
+                            Text(item.id == "codex" ? "处理请求" : ((isAntigravity || isClaudeSession || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"))
                                 .font(.system(size: 10, weight: .bold))
                                 .lineLimit(1)
                         }

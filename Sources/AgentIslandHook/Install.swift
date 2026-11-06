@@ -7,6 +7,10 @@ enum InstallError: Error { case invalidConfiguration, unsafePath, writeFailure, 
 enum NativeHookInstaller {
     private static let codexEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PermissionRequest", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "Interrupt"]
     private static let antigravityEvents = ["PreInvocation", "PostToolUse", "Stop"]
+    // Claude Code's own event names. `Notification` is deliberately absent: it
+    // fires for several unrelated reasons and would make the state ambiguous.
+    static let claudeEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "PermissionDenied",
+                               "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "Stop", "StopFailure"]
 
     static func shellQuote(_ path: String) -> String {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -55,7 +59,8 @@ enum NativeHookInstaller {
         let nativeRoot = parts.count >= 5 && parts[parts.count - 3] == "native" && parts[parts.count - 4] == "hooks" && parts[parts.count - 5] == "AgentIsland"
         guard legacyRoot || nativeRoot, args.count >= 2, args[0] == "--source", args[1] == source else { return false }
         if source == "codex" { return args.count == 2 }
-        return args.count == 4 && args[2] == "--event" && antigravityEvents.contains(args[3])
+        let events = source == "claude" ? claudeEvents : antigravityEvents
+        return args.count == 4 && args[2] == "--event" && events.contains(args[3])
     }
 
     static func stripOwn(_ entries: [Any], source: String) -> [Any] {
@@ -77,9 +82,11 @@ enum NativeHookInstaller {
     }
 
     static func removeOwn(_ config: [String: Any], source: String) throws -> ([String: Any], Bool) {
-        guard ["codex", "antigravity"].contains(source) else { throw InstallError.invalidConfiguration }
+        guard ["codex", "antigravity", "claude"].contains(source) else { throw InstallError.invalidConfiguration }
         var output = config, changed = false
-        let namespaces = source == "codex" ? ["hooks"] : ["aikeyboardlight", "agentisland"]
+        // Claude Code keeps hooks under the same top-level key as Codex; the
+        // commands are told apart by their `--source` argument, not the key.
+        let namespaces = source == "antigravity" ? ["aikeyboardlight", "agentisland"] : ["hooks"]
         for namespace in namespaces {
             guard output[namespace] == nil || output[namespace] is [String: Any] else { throw InstallError.invalidConfiguration }
             guard var hooks = output[namespace] as? [String: Any] else { continue }
@@ -93,7 +100,9 @@ enum NativeHookInstaller {
                     if remaining.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = remaining }
                 }
             }
-            if hooks.isEmpty && source == "antigravity" { output.removeValue(forKey: namespace) }
+            // settings.json holds unrelated user settings, so an emptied hooks
+            // object is removed rather than left behind as a leftover key.
+            if hooks.isEmpty && ["antigravity", "claude"].contains(source) { output.removeValue(forKey: namespace) }
             else { output[namespace] = hooks }
         }
         return (output, changed)
@@ -129,9 +138,29 @@ enum NativeHookInstaller {
     }
 
     static func merge(_ config: [String: Any], source: String, helper: String) throws -> [String: Any] {
-        guard ["codex", "antigravity"].contains(source) else { throw InstallError.invalidConfiguration }
+        guard ["codex", "antigravity", "claude"].contains(source) else { throw InstallError.invalidConfiguration }
         var output = config
         let prefix = shellQuote(helper) + " --source " + source
+        if source == "claude" {
+            // Other tools commonly own hooks on these same events, so strip
+            // only our own registrations and then append our own group rather
+            // than adding entries to a group another tool owns.
+            guard output["hooks"] == nil || output["hooks"] is [String: Any] else { throw InstallError.invalidConfiguration }
+            var hooks = output["hooks"] as? [String: Any] ?? [:]
+            for (event, value) in hooks {
+                guard let entries = value as? [Any] else { continue }
+                let remaining = stripOwn(entries, source: source)
+                if remaining.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = remaining }
+            }
+            for event in claudeEvents {
+                guard hooks[event] == nil || hooks[event] is [Any] else { throw InstallError.invalidConfiguration }
+                var entries = hooks[event] as? [Any] ?? []
+                entries.append(["hooks": [["type": "command", "command": prefix + " --event " + event, "timeout": 1]]])
+                hooks[event] = entries
+            }
+            output["hooks"] = hooks
+            return output
+        }
         if source == "codex" {
             guard output["hooks"] == nil || output["hooks"] is [String: Any] else { throw InstallError.invalidConfiguration }
             var hooks = output["hooks"] as? [String: Any] ?? [:]

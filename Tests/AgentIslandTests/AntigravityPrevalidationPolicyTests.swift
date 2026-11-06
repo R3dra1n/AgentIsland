@@ -57,4 +57,29 @@ final class AntigravityPrevalidationPolicyTests: XCTestCase {
             sessions: [changed], inFlight: [], attempted: [:], prepared: prepared, limit: 2)
         XCTAssertEqual(next.map(\.0), ["a"])
     }
+
+    // The reported symptom: "此 Antigravity 版本尚未验证" stayed on the HUD
+    // after the session had stopped waiting. A preparation that fails leaves
+    // the in-flight maps at once, so nothing else ever cleared its message.
+    func testFeedbackExpiresOnceTheSessionStopsWaiting() {
+        let now = Date(timeIntervalSince1970: 2_000_000)
+        let recent = now.addingTimeInterval(-AntigravityActionController.feedbackGrace + 1)
+        let old = now.addingTimeInterval(-AntigravityActionController.feedbackGrace - 1)
+        let written = ["waiting": old, "done": old, "fresh": recent]
+
+        // A session still waiting keeps its message however old it is.
+        XCTAssertEqual(AntigravityActionController.expiredFeedbackSessions(
+            shown: ["waiting", "done", "fresh"], writtenAt: written,
+            activeTargets: ["waiting"], now: now), ["done"])
+
+        // Nothing is waiting any more, so only the aged messages clear; a
+        // just-written send confirmation stays readable for its grace period.
+        XCTAssertEqual(AntigravityActionController.expiredFeedbackSessions(
+            shown: ["waiting", "done", "fresh"], writtenAt: written,
+            activeTargets: [], now: now), ["done", "waiting"])
+
+        // A message with no recorded time is stale by definition.
+        XCTAssertEqual(AntigravityActionController.expiredFeedbackSessions(
+            shown: ["orphan"], writtenAt: [:], activeTargets: [], now: now), ["orphan"])
+    }
 }

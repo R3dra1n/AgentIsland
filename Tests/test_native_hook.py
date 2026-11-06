@@ -147,6 +147,110 @@ class NativeHookTests(unittest.TestCase):
             self.assertEqual(json.loads(config.read_text()), after)
             self.assertEqual(len(list(root.glob('hooks.json.agentisland-backup-*'))), 2)
 
+    # Claude Code keeps hooks in settings.json alongside the user's other
+    # settings, and other tools commonly own hooks on the same events.
+    CLAUDE_EVENTS = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PermissionRequest', 'PermissionDenied',
+                     'PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'SubagentStop', 'Stop', 'StopFailure']
+
+    def claude_baseline(self):
+        other = '/opt/other-tool/status'
+        return other, {
+            'theme': 'dark',
+            'hooks': {
+                'Notification': [{'hooks': [{'type': 'command', 'command': other}]}],
+                'PermissionRequest': [{'hooks': [{'type': 'command', 'command': other}]}],
+                'SessionStart': [{'matcher': '*', 'hooks': [{'type': 'command', 'command': other}]}],
+            },
+        }
+
+    def claude_commands(self, config):
+        found = []
+        for event, groups in (config.get('hooks') or {}).items():
+            for group in groups:
+                for entry in group.get('hooks') or []:
+                    found.append((event, entry.get('command', '')))
+        return found
+
+    def test_claude_installer_appends_without_touching_other_tools(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); config = root / 'settings.json'
+            other, original = self.claude_baseline()
+            config.write_text(json.dumps(original))
+            args = [HOOK, '--install', '--source', 'claude', '--output', str(config),
+                    '--recorder-dir', str(root / 'AgentIsland/hooks')]
+            subprocess.run(args, check=True, capture_output=True)
+            after = json.loads(config.read_text())
+            commands = self.claude_commands(after)
+            mine = [c for c in commands if '--source claude' in c[1]]
+            theirs = [c for c in commands if '--source claude' not in c[1]]
+            self.assertEqual(sorted(theirs), sorted(self.claude_commands(original)))
+            self.assertEqual(after['theme'], 'dark')
+            self.assertEqual(sorted(e for e, _ in mine), sorted(self.CLAUDE_EVENTS))
+            # Notification is deliberately never registered.
+            self.assertNotIn('Notification', [e for e, _ in mine])
+            # A group carrying another tool's matcher must survive untouched.
+            self.assertTrue(any('matcher' in g for g in after['hooks']['SessionStart']))
+            # Our entries never share a group with another tool's.
+            for groups in after['hooks'].values():
+                for group in groups:
+                    entries = group.get('hooks') or []
+                    ours = [e for e in entries if '--source claude' in e.get('command', '')]
+                    self.assertIn(len(ours), (0, len(entries)))
+
+    def test_claude_reinstall_replaces_and_uninstall_restores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); config = root / 'settings.json'
+            _, original = self.claude_baseline()
+            config.write_text(json.dumps(original))
+            args = ['--source', 'claude', '--output', str(config)]
+            install = [HOOK, '--install', *args, '--recorder-dir', str(root / 'AgentIsland/hooks')]
+            subprocess.run(install, check=True, capture_output=True)
+            once = json.loads(config.read_text())
+            subprocess.run(install, check=True, capture_output=True)
+            twice = json.loads(config.read_text())
+            self.assertEqual(once, twice, 'reinstalling must not duplicate registrations')
+            subprocess.run([HOOK, '--uninstall', *args], check=True, capture_output=True)
+            self.assertEqual(json.loads(config.read_text()), original)
+
+    def test_claude_uninstall_leaves_a_foreign_source_alone(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); config = root / 'settings.json'
+            # Same binary name, a different assistant: not ours to remove.
+            foreign = "'/tmp/AgentIsland/hooks/native/x/AgentIslandHook' --source codex"
+            original = {'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': foreign}]}]}}
+            config.write_text(json.dumps(original))
+            args = ['--source', 'claude', '--output', str(config)]
+            subprocess.run([HOOK, '--install', *args, '--recorder-dir', str(root / 'AgentIsland/hooks')],
+                           check=True, capture_output=True)
+            subprocess.run([HOOK, '--uninstall', *args], check=True, capture_output=True)
+            self.assertEqual(json.loads(config.read_text()), original)
+
+    def test_claude_recorder_normalizes_prompt_id_and_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cases = [
+                ('PermissionRequest', {'hook_event_name': 'PermissionRequest', 'session_id': 's', 'prompt_id': 'p1',
+                                       'tool_name': 'Bash', 'tool_use_id': 'toolu_1',
+                                       'tool_input': {'command': '  echo hello  '}}, 'PermissionRequest'),
+                ('PermissionDenied', {'hook_event_name': 'PermissionDenied', 'session_id': 's', 'prompt_id': 'p1',
+                                      'tool_name': 'Bash', 'tool_use_id': 'toolu_1'}, 'PostToolUse'),
+                ('StopFailure', {'hook_event_name': 'StopFailure', 'session_id': 's', 'prompt_id': 'p1'}, 'Stop'),
+            ]
+            for event, payload, expected in cases:
+                result = self.run_hook(HOOK, 'claude', json.dumps(payload).encode(), root, event=event)
+                self.assertEqual(result.returncode, 0)
+                # Exit 0 with a neutral body: the recorder never decides.
+                self.assertEqual(result.stdout.strip(), b'{}')
+            records = [json.loads(l) for l in (root / 'claude.jsonl').read_text().splitlines()]
+            self.assertEqual([r['hook_event_name'] for r in records], ['PermissionRequest', 'PostToolUse', 'Stop'])
+            self.assertTrue(all(r['turn_id'] == 'p1' for r in records))
+            digest = hashlib.sha256('echo hello'.encode()).hexdigest()
+            self.assertEqual(records[0]['command_digest'], digest)
+            # The command text itself is never written to the journal.
+            self.assertNotIn('echo hello', (root / 'claude.jsonl').read_text())
+            self.assertTrue(records[2]['has_error'])
+            self.assertEqual(records[2]['termination_reason'], 'error')
+
     def test_uninstall_removes_only_own_hook_and_keeps_backups(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory); config = root / 'hooks.json'

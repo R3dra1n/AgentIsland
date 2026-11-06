@@ -26,14 +26,29 @@ public final class CodexObserver: AIObserverProtocol {
     public weak var delegate: AIObserverDelegate?
     private var polling: Task<Void, Never>?
     private let scanner: LogScanner
+    /// When each session's requests were last confirmed by a source that could
+    /// actually see them, so a session the desktop can no longer reach cannot
+    /// keep its requests on screen forever.
+    private var lastConfirmed: [String: Date] = [:]
 
     public init(root: URL? = nil) {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let defaultRoot = ProcessInfo.processInfo.environment["CODEX_HOME"].map { URL(fileURLWithPath: $0).appendingPathComponent("sessions") } ?? home.appendingPathComponent(".codex/sessions")
-        let legacyHooks = home.appendingPathComponent("Library/Application Support/AiKeyboardLight/events/codex.jsonl")
         scanner = LogScanner(source: id, root: root ?? defaultRoot,
             // The recorder can create its journal after the app starts.
-            hookURL: root == nil ? legacyHooks : nil)
+            hookURL: root == nil ? Self.hookJournalURL(home: home) : nil)
+    }
+
+    /// Where the Codex hook recorder writes its journal. Both recorders write
+    /// under `AgentIsland`, but this once read the pre-rename `AiKeyboardLight`
+    /// location, so events from a hook installed through the app were never
+    /// seen. The old location is still honoured, but only for someone who has a
+    /// journal there and none in the current place.
+    nonisolated static func hookJournalURL(home: URL, fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> URL {
+        let support = home.appendingPathComponent("Library/Application Support", isDirectory: true)
+        let current = support.appendingPathComponent("AgentIsland/events/codex.jsonl")
+        let legacy = support.appendingPathComponent("AiKeyboardLight/events/codex.jsonl")
+        return !fileExists(current.path) && fileExists(legacy.path) ? legacy : current
     }
 
     public func startObserving() {
@@ -45,7 +60,7 @@ public final class CodexObserver: AIObserverProtocol {
                 var snapshot = await scanner.scan()
                 let previousRequests = self?.pendingRequests ?? []
                 let pendingSessions = Set((snapshot.codexRequests + previousRequests).map(\.sessionID))
-                let historyNeededSessions = Set(snapshot.codexRequests.filter { $0.isAsynchronous && $0.desktopMethod == nil }.map(\.sessionID))
+                let historyNeededSessions = Self.sessionsNeedingHistory(scanned: snapshot.codexRequests, previous: previousRequests)
                 let fallbackActive = await scanner.activeCodexSessionStates()
                 let recent = await scanner.recentCodexSessionIDs()
                 let sessions = pendingSessions.union(recent).union(fallbackActive.keys).filter { !$0.isEmpty }
@@ -58,12 +73,23 @@ public final class CodexObserver: AIObserverProtocol {
                             return (session, live?.requests, live?.activity, live?.resolvedAsyncCallIDs ?? [], live?.historicalAsyncCallIDs ?? [])
                         }
                     }
+                    let now = Date()
                     for await (session, requests, state, resolved, historical) in group {
                         if let requests, let state {
                             snapshot.codexRequests = Self.mergeRequests(snapshot.codexRequests, live: requests, session: session, resolvedAsyncCallIDs: resolved, historicalAsyncCallIDs: historical)
                             if state.state != .unknown { liveStates.append(state) }
+                            self?.confirm(session: session, at: now)
                         } else if !snapshot.codexRequests.contains(where: { $0.sessionID == session }) {
-                            snapshot.codexRequests.append(contentsOf: previousRequests.filter { $0.sessionID == session })
+                            // The desktop could not be asked about this session.
+                            // Carrying its previous requests bridges a transient
+                            // failure, but only for a bounded time: a session the
+                            // desktop has stopped serving would otherwise keep its
+                            // questions on screen for as long as the app runs,
+                            // long after every source has stopped reporting them.
+                            let confirmed = self?.lastConfirmation(session: session)
+                            if Self.mayCarryOver(lastConfirmed: confirmed, now: now) {
+                                snapshot.codexRequests.append(contentsOf: previousRequests.filter { $0.sessionID == session })
+                            }
                         }
                     }
                 }
@@ -86,6 +112,38 @@ public final class CodexObserver: AIObserverProtocol {
     }
 
     public func stopObserving() { polling?.cancel(); polling = nil }
+
+    /// How long a session's requests may be carried across desktop IPC
+    /// failures. Long enough to ride out a restart or a busy desktop, short
+    /// enough that a session nothing can see any more stops being displayed.
+    nonisolated static let carryOverGrace: TimeInterval = 120
+
+    nonisolated static func mayCarryOver(lastConfirmed: Date?, now: Date) -> Bool {
+        // Never confirmed means the request came from the log scanner, which
+        // re-derives it every poll; there is nothing to bridge.
+        guard let lastConfirmed else { return false }
+        return now.timeIntervalSince(lastConfirmed) <= carryOverGrace
+    }
+
+    private func confirm(session: String, at date: Date) { lastConfirmed[session] = date }
+
+    private func lastConfirmation(session: String) -> Date? { lastConfirmed[session] }
+
+    /// Which sessions should ask the desktop to load their complete history.
+    /// Reconciling an async question against the full transcript is the only
+    /// way to tell an answered or abandoned question from one still waiting.
+    ///
+    /// The questions actually displayed usually come from the desktop IPC and
+    /// are merged in *after* the scan, so on any given poll they appear only in
+    /// the previous poll's requests and carry `desktopMethod` rather than the
+    /// scanner's `isAsynchronous`. Looking at the freshly scanned requests
+    /// alone never matched them, so complete history was never requested for
+    /// exactly the sessions that needed it.
+    nonisolated static func sessionsNeedingHistory(scanned: [CodexPendingRequest], previous: [CodexPendingRequest]) -> Set<String> {
+        Set((scanned + previous)
+            .filter { $0.isAsynchronous || $0.desktopMethod == "async-question" }
+            .map(\.sessionID))
+    }
 
     nonisolated static func mergeRequests(_ existing: [CodexPendingRequest], live: [CodexPendingRequest], session: String, resolvedAsyncCallIDs: Set<String> = [], historicalAsyncCallIDs: Set<String> = []) -> [CodexPendingRequest] {
         let hidden = resolvedAsyncCallIDs.union(historicalAsyncCallIDs)

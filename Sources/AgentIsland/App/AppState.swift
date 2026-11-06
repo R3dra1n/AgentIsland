@@ -108,6 +108,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published public var antigravityActionInFlight = false
     @Published var antigravitySessionFeedback: [String: String] = [:]
     @Published var antigravityAcknowledgedSessions: [String: Date] = [:]
+    /// Every Claude Code conversation that currently has something to show. The
+    /// HUD gets one row per conversation once there is more than one.
+    @Published var claudeSessions: [ClaudeSessionSnapshot] = []
+    @Published var claudeAcknowledgedSessions: [String: Date] = [:]
     private var antigravityViewedMonitor: AntigravityViewedMonitor?
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
     @Published var antigravityPrevalidationEnabled = false
@@ -161,22 +165,124 @@ public final class AppState: ObservableObject, AIObserverDelegate {
 
     static let antigravitySessionPrefix = "antigravity-session:"
     private var antigravitySessionLabels: [String: Int] = [:]
+    static let claudeSessionPrefix = "claude-session:"
+    private var claudeSessionLabels: [String: Int] = [:]
+
+    static let overflowPrefix = "overflow:"
+    /// Conversations beyond this many per assistant fold into one "+N" chip, so
+    /// the HUD cannot grow without bound however many conversations are open.
+    static let maximumRowsPerProvider = 3
+
+    struct SessionRows: Equatable {
+        var rows: [AIObserverItem]
+        var hidden: [AIObserverItem]
+    }
+
+    /// A conversation has a row of its own only while there is something to look
+    /// at. One that is idle, or finished and already viewed, is history: it goes
+    /// back into its assistant's single icon instead of sitting there as a grey
+    /// row, which is what made the HUD grow with every conversation ever opened.
+    static func needsAttention(_ state: AIState) -> Bool { state != .idle && state != .unknown }
+
+    /// Chooses which conversations are shown. `all` holds one row per known
+    /// conversation, with viewed ones already reported as idle.
+    ///
+    /// - Nothing needs attention: the plain provider row.
+    /// - Exactly one: `soloKeepsProviderRow` decides between the provider row
+    ///   and that conversation's own row under the provider's plain name.
+    /// - Several: one row each, in their stable order, up to `limit`.
+    /// - More than `limit`: the most pressing keep their rows and the rest fold
+    ///   into a "+N" chip that takes the colour of the worst state it hides.
+    static func arrangeSessionRows(provider: AIObserverItem, all: [AIObserverItem], soloKeepsProviderRow: Bool,
+                                   limit: Int = maximumRowsPerProvider) -> SessionRows {
+        let attention = all.filter { needsAttention($0.state) }
+        if attention.isEmpty || (attention.count == 1 && soloKeepsProviderRow) {
+            return SessionRows(rows: [provider], hidden: [])
+        }
+        guard attention.count > limit else {
+            var rows = attention
+            if rows.count == 1 { rows[0].name = provider.name }
+            return SessionRows(rows: rows, hidden: [])
+        }
+        // Rank by how much the user is needed, then by the stable order, but show
+        // the survivors in the stable order so rows do not jump around.
+        let ranked = attention.enumerated().sorted { lhs, rhs in
+            lhs.element.state != rhs.element.state ? lhs.element.state > rhs.element.state : lhs.offset < rhs.offset
+        }
+        let kept = Set(ranked.prefix(limit).map(\.offset))
+        let shown = attention.enumerated().filter { kept.contains($0.offset) }.map(\.element)
+        let hidden = attention.enumerated().filter { !kept.contains($0.offset) }.map(\.element)
+        let chip = AIObserverItem(id: overflowPrefix + provider.id, name: "+\(hidden.count)", icon: provider.icon,
+                                  isEnabled: provider.isEnabled, state: hidden.map(\.state).max() ?? .idle,
+                                  description: "另有 \(hidden.count) 个会话")
+        return SessionRows(rows: shown + [chip], hidden: hidden)
+    }
+
+    private static func isViewed(completedAt: Date?, lastActive: Date?, state: AIState, acknowledged: [String: Date], id: String) -> Bool {
+        state == .completed && ((completedAt ?? lastActive).map { (acknowledged[id] ?? .distantPast) >= $0 } ?? false)
+    }
+
+    static func claudeArrangement(_ provider: AIObserverItem, sessions: [ClaudeSessionSnapshot], labels: [String: Int],
+                                  acknowledged: [String: Date]) -> SessionRows {
+        let all = sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session -> AIObserverItem in
+            let viewed = isViewed(completedAt: session.completedAt, lastActive: session.lastActiveDate, state: session.state,
+                                  acknowledged: acknowledged, id: session.id)
+            return AIObserverItem(id: claudeSessionPrefix + session.id, name: "Claude · 会话 \(labels[session.id] ?? 0)",
+                icon: "claude", isEnabled: provider.isEnabled, state: viewed ? .idle : session.state,
+                description: viewed ? "待命中" : session.description, actionDetail: session.actionDetail)
+        }
+        // A single conversation keeps the plain provider row, so people who only
+        // ever run one see no change.
+        return arrangeSessionRows(provider: provider, all: all, soloKeepsProviderRow: true)
+    }
+
+    static func expandClaudeSessions(_ providers: [AIObserverItem], sessions: [ClaudeSessionSnapshot],
+                                     labels: [String: Int], acknowledged: [String: Date] = [:]) -> [AIObserverItem] {
+        providers.flatMap { provider in
+            guard provider.id == "claude", !sessions.isEmpty else { return [provider] }
+            return claudeArrangement(provider, sessions: sessions, labels: labels, acknowledged: acknowledged).rows
+        }
+    }
+
+    static func antigravityArrangement(_ provider: AIObserverItem, sessions: [AntigravitySessionSnapshot],
+                                       feedback: [String: String], labels: [String: Int],
+                                       acknowledged: [String: Date]) -> SessionRows {
+        let all = sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session -> AIObserverItem in
+            let viewed = isViewed(completedAt: session.completedAt, lastActive: session.lastActiveDate, state: session.state,
+                                  acknowledged: acknowledged, id: session.id)
+            return AIObserverItem(id: antigravitySessionPrefix + session.id, name: "Antigravity · 会话 \(labels[session.id] ?? 0)",
+                icon: "antigravity", isEnabled: provider.isEnabled, state: viewed ? .idle : session.state,
+                description: viewed ? "待命中" : (session.state == .awaitingInput ? (feedback[session.id] ?? session.description) : session.description),
+                actionDetail: session.actionDetail)
+        }
+        // Antigravity answers are bound to a specific conversation, so even a
+        // lone one keeps its own row (under the plain name) and its reply path.
+        return arrangeSessionRows(provider: provider, all: all, soloKeepsProviderRow: false)
+    }
 
     static func expandAntigravitySessions(_ providers: [AIObserverItem], sessions: [AntigravitySessionSnapshot],
                                           feedback: [String: String], labels: [String: Int],
                                           acknowledged: [String: Date] = [:]) -> [AIObserverItem] {
         providers.flatMap { provider in
             guard provider.id == "antigravity", !sessions.isEmpty else { return [provider] }
-            return sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session in
-                let label = labels[session.id] ?? 0
-                let viewed = session.state == .completed && ((session.completedAt ?? session.lastActiveDate).map {
-                    (acknowledged[session.id] ?? .distantPast) >= $0
-                } ?? false)
-                return AIObserverItem(id: antigravitySessionPrefix + session.id, name: "Antigravity · 会话 \(label)",
-                    icon: "antigravity", isEnabled: provider.isEnabled, state: viewed ? .idle : session.state,
-                    description: viewed ? "待命中" : (session.state == .awaitingInput ? (feedback[session.id] ?? session.description) : session.description),
-                    actionDetail: session.actionDetail)
-            }
+            return antigravityArrangement(provider, sessions: sessions, feedback: feedback, labels: labels,
+                                          acknowledged: acknowledged).rows
+        }
+    }
+
+    /// The conversations folded into an assistant's "+N" chip, for its list.
+    func hiddenSessionRows(for providerID: String) -> [AIObserverItem] {
+        guard let provider = allObservers.first(where: { $0.id == providerID && $0.isEnabled }) else { return [] }
+        switch providerID {
+        case "claude":
+            return Self.claudeArrangement(provider, sessions: claudeSessions, labels: claudeSessionLabels,
+                                          acknowledged: claudeAcknowledgedSessions).hidden
+        case "antigravity":
+            return Self.antigravityArrangement(provider, sessions: antigravityObserver.sessions,
+                                               feedback: antigravitySessionFeedback, labels: antigravitySessionLabels,
+                                               acknowledged: antigravityAcknowledgedSessions).hidden
+        default:
+            return []
         }
     }
 
@@ -189,8 +295,13 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         for session in sessions where antigravitySessionLabels[session.id] == nil {
             antigravitySessionLabels[session.id] = antigravitySessionLabels.count + 1
         }
-        let list = Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
-                                                 labels: antigravitySessionLabels, acknowledged: antigravityAcknowledgedSessions)
+        for session in claudeSessions where claudeSessionLabels[session.id] == nil {
+            claudeSessionLabels[session.id] = claudeSessionLabels.count + 1
+        }
+        let list = Self.expandClaudeSessions(
+            Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
+                                           labels: antigravitySessionLabels, acknowledged: antigravityAcknowledgedSessions),
+            sessions: claudeSessions, labels: claudeSessionLabels, acknowledged: claudeAcknowledgedSessions)
         switch hudDisplayMode {
         case .always:
             return list

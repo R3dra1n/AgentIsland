@@ -28,11 +28,5 @@ final class LifecycleDelegate: NSObject, NSApplicationDelegate {
             source.setEventHandler { NSApplication.shared.terminate(nil) }
             source.resume(); signals.append(source)
         }
-        let center = NSWorkspace.shared.notificationCenter
-        center.addObserver(self, selector: #selector(sleeping), name: NSWorkspace.willSleepNotification, object: nil)
-        center.addObserver(self, selector: #selector(waking), name: NSWorkspace.didWakeNotification, object: nil)
     }
-    @objc private func sleeping() {}
-    @objc private func waking() {}
-    func applicationWillTerminate(_ notification: Notification) {}
 }

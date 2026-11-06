@@ -289,9 +289,11 @@ public struct PopoverContentView: View {
                 Menu("配置") {
                     Button("配置 Codex Hook…") { NativeHookSetup.begin(source: "codex") }
                     Button("配置 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity") }
+                    Button("配置 Claude Code Hook…") { NativeHookSetup.begin(source: "claude") }
                     Divider()
                     Button("移除 Codex Hook…") { NativeHookSetup.begin(source: "codex", removing: true) }
                     Button("移除 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity", removing: true) }
+                    Button("移除 Claude Code Hook…") { NativeHookSetup.begin(source: "claude", removing: true) }
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
@@ -329,7 +331,7 @@ public struct PopoverContentView: View {
     private var footerSection: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
-                let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "2.4"
+                let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
                 Text("AgentIsland v\(version)")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.secondary)

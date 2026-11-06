@@ -5,19 +5,24 @@ import Foundation
 @MainActor
 enum NativeHookSetup {
     static func begin(source: String, removing: Bool = false) {
-        guard ["codex", "antigravity"].contains(source),
+        guard ["codex", "antigravity", "claude"].contains(source),
               let executable = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("AgentIslandHook"),
               FileManager.default.isExecutableFile(atPath: executable.path) else {
             show("无法配置 Hook", "当前应用缺少原生 Hook 工具，请使用完整的安装包。")
             return
         }
-        let display = source == "codex" ? "Codex" : "Antigravity"
+        let display = ["codex": "Codex", "antigravity": "Antigravity", "claude": "Claude Code"][source] ?? source
+        // Claude Code keeps hooks in settings.json; the other two use hooks.json.
+        let fileName = source == "claude" ? "settings.json" : "hooks.json"
         let verb = removing ? "移除" : "安装"
         let intro = NSAlert()
         intro.messageText = "\(verb) \(display) Hook"
-        intro.informativeText = removing
-            ? "接下来选择该助手的 hooks.json 或所在目录。只移除可识别的 AgentIsland 注册，其他 Hook 保留；现有配置会备份。原生工具不会自动删除，以免其他配置仍在使用。"
-            : "接下来选择该助手的 hooks.json，或选择包含它的目录。安装会备份现有配置并保留其他 Hook；如果目录中没有文件，将创建 hooks.json。请先确认该助手版本读取此位置。"
+        let claudeNote = source == "claude"
+            ? "\n\nClaude Code 的用户级配置通常是 ~/.claude/settings.json。其他工具常把 Hook 挂在相同事件上，安装只会追加 AgentIsland 自己的命令，不会动到它们。"
+            : ""
+        intro.informativeText = (removing
+            ? "接下来选择该助手的 \(fileName) 或所在目录。只移除可识别的 AgentIsland 注册，其他 Hook 保留；现有配置会备份。原生工具不会自动删除，以免其他配置仍在使用。"
+            : "接下来选择该助手的 \(fileName)，或选择包含它的目录。安装会备份现有配置并保留其他 Hook；如果目录中没有文件，将创建 \(fileName)。请先确认该助手版本读取此位置。") + claudeNote
         intro.addButton(withTitle: "选择位置")
         intro.addButton(withTitle: "取消")
         guard intro.runModal() == .alertFirstButtonReturn else { return }
@@ -27,16 +32,19 @@ enum NativeHookSetup {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.showsHiddenFiles = true
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        // Start where the file usually lives, without reading or changing it.
+        let suggested = home.appendingPathComponent(".claude", isDirectory: true)
+        panel.directoryURL = source == "claude" && FileManager.default.fileExists(atPath: suggested.path) ? suggested : home
         guard panel.runModal() == .OK, let selected = panel.url else { return }
         var directory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: selected.path, isDirectory: &directory) else {
             show("配置失败", "选择的位置不可用。")
             return
         }
-        let destination = directory.boolValue ? selected.appendingPathComponent("hooks.json") : selected
-        guard destination.lastPathComponent == "hooks.json" else {
-            show("配置失败", "请选择 hooks.json 或它所在的目录。")
+        let destination = directory.boolValue ? selected.appendingPathComponent(fileName) : selected
+        guard destination.lastPathComponent == fileName else {
+            show("配置失败", "请选择 \(fileName) 或它所在的目录。")
             return
         }
         let confirm = NSAlert()

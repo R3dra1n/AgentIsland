@@ -195,13 +195,4 @@ public struct MenuBarLabelView: View {
         }
     }
 
-    private func statusColor(for state: AIState) -> Color {
-        switch state {
-        case .awaitingInput: return .red
-        case .running: return .yellow
-        case .completed: return .green
-        case .failed: return .orange
-        case .interrupted, .idle, .unknown: return .secondary
-        }
-    }
 }

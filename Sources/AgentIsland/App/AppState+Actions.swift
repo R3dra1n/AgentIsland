@@ -130,9 +130,37 @@ extension AppState {
         if !stillActive { acknowledgeAntigravity() }
     }
 
+    /// Marks the finished conversation behind a row as viewed, whichever
+    /// assistant it belongs to.
+    func acknowledgeSessionRow(_ row: AIObserverItem) {
+        if row.id.hasPrefix(Self.antigravitySessionPrefix) {
+            acknowledgeAntigravitySession(String(row.id.dropFirst(Self.antigravitySessionPrefix.count)))
+        } else if row.id.hasPrefix(Self.claudeSessionPrefix) {
+            acknowledgeClaudeSession(String(row.id.dropFirst(Self.claudeSessionPrefix.count)))
+        }
+    }
+
+    /// Acknowledges one finished conversation. The provider-level completion is
+    /// only cleared once no conversation is left that still needs attention.
+    func acknowledgeClaudeSession(_ id: String) {
+        guard let session = claudeSessions.first(where: { $0.id == id }), session.state == .completed,
+              let completion = session.completedAt ?? session.lastActiveDate else { return }
+        claudeAcknowledgedSessions[id] = max(Date(), completion)
+        let stillActive = claudeSessions.contains { session in
+            if session.state == .running || session.state == .awaitingInput { return true }
+            guard session.state == .completed else { return false }
+            return (claudeAcknowledgedSessions[session.id] ?? .distantPast) < (session.completedAt ?? session.lastActiveDate ?? .distantFuture)
+        }
+        if !stillActive { acknowledgeClaude() }
+    }
+
     public func acknowledgeClaude() {
         if testModeActive { stopTest(); return }
         lastAcknowledgedDates["claude"] = Date()
+        // Acknowledging the provider acknowledges everything it has finished.
+        for session in claudeSessions where session.state == .completed {
+            claudeAcknowledgedSessions[session.id] = max(Date(), session.completedAt ?? session.lastActiveDate ?? Date())
+        }
         claudeNeedsAck = false
 
 
@@ -169,10 +197,4 @@ extension AppState {
         recalculateAggregatedState()
     }
 
-    public func acknowledgeAll() {
-        if testModeActive { stopTest(); return }
-        if codexNeedsAck || codexState == .completed { acknowledgeCodex() }
-        if antigravityNeedsAck || antigravityState == .completed { acknowledgeAntigravity() }
-        if claudeNeedsAck || claudeState == .completed { acknowledgeClaude() }
-    }
 }

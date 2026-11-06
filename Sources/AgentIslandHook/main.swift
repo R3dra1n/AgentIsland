@@ -8,6 +8,18 @@ import Darwin
 private let supportedEvents: Set<String> = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "Interrupt", "PreInvocation"]
 private let maxInput = 1024 * 1024
 
+/// Claude Code emits several event names that mean the same thing to the state
+/// store as one of the names above. Translating them here keeps the shared
+/// reducer unchanged; anything not listed and not already supported is ignored.
+private let claudeEventAliases: [String: String] = [
+    // A denied permission still resolves the outstanding request.
+    "PermissionDenied": "PostToolUse",
+    "PostToolUseFailure": "PostToolUse",
+    "StopFailure": "Stop"
+]
+/// Aliases that additionally mean the turn ended badly.
+private let claudeFailureEvents: Set<String> = ["StopFailure"]
+
 private enum HookError: Error { case malformed, unsafePath, fileOperation, timeout }
 
 private func count(_ value: String) -> Int { value.unicodeScalars.count }
@@ -23,17 +35,34 @@ private func truthy(_ value: Any?) -> Bool {
 }
 
 private func normalize(_ input: [String: Any], source: String, event: String?) throws -> [String: Any] {
-    guard let name = event ?? input["hook_event_name"] as? String, supportedEvents.contains(name),
-          let session = input[source == "codex" ? "session_id" : "conversationId"] as? String,
+    let reported = event ?? input["hook_event_name"] as? String
+    // Translate before the whitelist check so aliased names are accepted.
+    let name = source == "claude" ? (reported.flatMap { claudeEventAliases[$0] ?? $0 }) : reported
+    guard let name, supportedEvents.contains(name),
+          let session = input[source == "antigravity" ? "conversationId" : "session_id"] as? String,
           !session.isEmpty, count(session) <= 256 else { throw HookError.malformed }
     var record: [String: Any] = ["hook_event_name": name, "session_id": session]
     for key in ["turn_id", "agent_id", "tool_use_id", "tool_name", "request_id"] {
         if let value = input[key] as? String, !value.isEmpty, count(value) <= 256 { record[key] = value }
     }
-    if source == "codex", name == "PermissionRequest", let tool = input["tool_input"] as? [String: Any],
+    if ["codex", "claude"].contains(source), name == "PermissionRequest", let tool = input["tool_input"] as? [String: Any],
        let command = (tool["command"] ?? tool["cmd"]) as? String, !command.isEmpty, count(command) <= 65536 {
         let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines)
         record["command_digest"] = SHA256.hash(data: Data(normalized.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    if source == "claude" {
+        // Claude Code identifies the turn with `prompt_id`; the shared reducer
+        // keys turns on `turn_id`. No prompt id means no turn tracking, which
+        // the reducer already handles conservatively.
+        if record["turn_id"] == nil, let prompt = input["prompt_id"] as? String,
+           !prompt.isEmpty, count(prompt) <= 256 { record["turn_id"] = prompt }
+        if name == "Stop" {
+            let failed = reported.map { claudeFailureEvents.contains($0) } ?? false
+            record["has_error"] = failed
+            // Claude Code sends no idleness flag; a Stop ends the turn.
+            record["fully_idle"] = true
+            if failed { record["termination_reason"] = "error" }
+        }
     }
     if source == "antigravity" {
         if let tool = input["toolCall"] as? [String: Any], let name = tool["name"] as? String, count(name) <= 256 {
@@ -108,7 +137,7 @@ private func argument(_ name: String) -> String? {
 let source = argument("--source") ?? ""
 if CommandLine.arguments.contains("--install") || CommandLine.arguments.contains("--uninstall") {
     do {
-        guard ["codex", "antigravity"].contains(source), let output = argument("--output") else { throw HookError.malformed }
+        guard ["codex", "antigravity", "claude"].contains(source), let output = argument("--output") else { throw HookError.malformed }
         let configuration = URL(fileURLWithPath: output)
         if CommandLine.arguments.contains("--uninstall") {
             let changed = try NativeHookInstaller.uninstall(source: source, configuration: configuration)
@@ -129,7 +158,7 @@ if CommandLine.arguments.contains("--install") || CommandLine.arguments.contains
     let path = argument("--directory").map { URL(fileURLWithPath: $0, isDirectory: true) }
         ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/AgentIsland/events", isDirectory: true)
     do {
-        guard ["codex", "antigravity"].contains(source) else { throw HookError.malformed }
+        guard ["codex", "antigravity", "claude"].contains(source) else { throw HookError.malformed }
         try record(readInput(), source: source, event: event, directory: path)
     } catch {
         FileHandle.standardError.write(Data("AgentIsland hook was not recorded\n".utf8))

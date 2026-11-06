@@ -9,12 +9,16 @@ import Darwin
 struct AntigravityLocalTransport {
     private static let executableSuffix = "/Contents/Resources/bin/language_server"
     private static let service = "/exa.language_server_pb.LanguageServerService/"
-    private static let maximumResponse = 4 * 1024 * 1024
 
     // Other releases fail closed until their protocol and signing have been
     // checked. New versions remain experimental until real reply verification.
     static func supportsVersion(_ version: String) -> Bool {
-        ["2.27.0", "2.28.0", "2.28.2"].contains(version)
+        // 2.29.0: the question structure, the self-referencing step index, the
+        // 401/200 authentication behaviour and the completed-interaction reply
+        // shape were checked against a live waiting question and 98 recorded
+        // completed interactions. A free-text reply (`writeInResponse`) has no
+        // recorded sample, so it remains to be confirmed on a harmless question.
+        ["2.27.0", "2.28.0", "2.28.2", "2.29.0"].contains(version)
     }
 
     static func requireSupportedVersion(_ version: String) throws {
@@ -212,7 +216,7 @@ struct AntigravityLocalTransport {
         let credential = try token(pid: endpoint.pid)
         try Task.checkCancellation()
         let response = try await request(endpoint, method: method, data: data, credential: credential)
-        guard response.status == 200, response.body.count <= maximumResponse else { throw Failure.invalidResponse }
+        guard response.status == 200, response.body.count <= PinnedLoopbackHTTP.maximumResponse else { throw Failure.invalidResponse }
         return response.body
     }
 
