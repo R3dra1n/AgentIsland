@@ -36,7 +36,14 @@ public final class AIIconProvider: @unchecked Sendable {
             let url = Bundle.main.resourceURL?.appendingPathComponent("AgentIsland_AgentIsland.bundle")
             resources = url.flatMap { Bundle(url: $0) } ?? Bundle.main
         } else {
-            resources = Bundle.module
+            // Running from a build directory rather than an app bundle: SwiftPM
+            // puts the resource bundle next to the executable. Not `Bundle.module`:
+            // its generated accessor writes the absolute build path into the
+            // binary, which carries the builder's account name and project
+            // location into anything that is distributed.
+            let beside = Bundle.main.executableURL?.deletingLastPathComponent()
+                .appendingPathComponent("AgentIsland_AgentIsland.bundle")
+            resources = beside.flatMap { Bundle(url: $0) } ?? Bundle.main
         }
         let possiblePaths = [
             resources.url(forResource: provider, withExtension: "svg")?.path,
