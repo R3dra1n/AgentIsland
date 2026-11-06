@@ -12,6 +12,13 @@ enum NativeHookInstaller {
     static let claudeEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "PermissionDenied",
                                "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "Stop", "StopFailure"]
 
+    /// The registered command runs the recorder through this launcher. When the
+    /// recorder file has gone (app deleted or updated without removing the
+    /// hook), it exits 0 instead of failing: a hook that fails can make the
+    /// host block the user's messages. `$0` is the recorder path, passed as the
+    /// first argument after the script.
+    static let launcherScript = "[ -x \"$0\" ] || exit 0; exec \"$0\" \"$@\""
+
     static func shellQuote(_ path: String) -> String {
         "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
@@ -49,7 +56,13 @@ enum NativeHookInstaller {
     static func isOwn(_ command: String, source: String) -> Bool {
         guard var args = shellWords(command), !args.isEmpty else { return false }
         var script = args.removeFirst()
-        if script == "/usr/bin/python3" {
+        if script == "/bin/sh" {
+            // Only our exact launcher counts; any other `sh -c` is somebody else's hook.
+            guard args.count >= 3, args[0] == "-c", args[1] == launcherScript else { return false }
+            script = args[2]
+            args.removeFirst(3)
+            guard URL(fileURLWithPath: script).lastPathComponent == "AgentIslandHook" else { return false }
+        } else if script == "/usr/bin/python3" {
             guard !args.isEmpty else { return false }
             script = args.removeFirst()
             guard URL(fileURLWithPath: script).lastPathComponent == "record_hook.py" else { return false }
@@ -140,7 +153,7 @@ enum NativeHookInstaller {
     static func merge(_ config: [String: Any], source: String, helper: String) throws -> [String: Any] {
         guard ["codex", "antigravity", "claude"].contains(source) else { throw InstallError.invalidConfiguration }
         var output = config
-        let prefix = shellQuote(helper) + " --source " + source
+        let prefix = "/bin/sh -c " + shellQuote(launcherScript) + " " + shellQuote(helper) + " --source " + source
         if source == "claude" {
             // Other tools commonly own hooks on these same events, so strip
             // only our own registrations and then append our own group rather
