@@ -64,9 +64,9 @@ public struct FloatingHUDView: View {
             // With several Claude Code conversations a blind keystroke cannot
             // be aimed at the right one, so a conversation's row only brings
             // the original window forward instead of approving by key press.
-            onApprove: { claudeSessionRow ? appState.focusApp(for: "claude") : appState.approve(for: provider) },
-            onReject: { claudeSessionRow ? appState.focusApp(for: "claude") : appState.reject(for: provider) },
-            onFocus: { appState.focusApp(for: provider) },
+            onApprove: { claudeSessionRow ? appState.focusSession(item) : appState.approve(for: provider) },
+            onReject: { claudeSessionRow ? appState.focusSession(item) : appState.reject(for: provider) },
+            onFocus: { appState.focusSession(item) },
             onAcknowledge: {
                 if provider == "claude", claudeSessionRow {
                     appState.acknowledgeClaudeSession(String(item.id.dropFirst(AppState.claudeSessionPrefix.count)))
@@ -231,7 +231,7 @@ private struct OverflowSessionListView: View {
                     } else if row.state == .awaitingInput {
                         // Answering needs the conversation's own panel, which a
                         // folded row does not have, so go to the original window.
-                        Button("打开处理") { appState.focusApp(for: providerID) }
+                        Button("打开处理") { appState.focusSession(row) }
                             .controlSize(.mini).buttonStyle(.borderedProminent).tint(.red)
                     }
                 }
@@ -326,7 +326,7 @@ public struct AISegmentView: View {
             VStack(alignment: .leading, spacing: 5) {
                 ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: false,
                                     showsDisabledActions: true, onChoose: nil, onSend: nil)
-                Text("同时有多个 Claude Code 会话时，无法确认回复会送到哪一个，请在对应的终端或窗口中回答。")
+                Text("Claude Code 没有提供「指定某个会话」的回复通道，按键只能送到最前面的窗口，可能答错会话。请点「打开处理」回到 Claude，在对应会话里回答。")
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
         } else {
@@ -500,7 +500,7 @@ public struct AISegmentView: View {
                 }
                 .disabled(item.id == "codex" && appState.codexActionInFlight)
             } else if item.state == .completed, onAcknowledge != nil {
-                if isAntigravity {
+                if onFocus != nil {
                     Button("打开") { onFocus?() }.buttonStyle(.plain).font(.system(size: 9))
                 }
                 Button(action: { onAcknowledge?() }) {

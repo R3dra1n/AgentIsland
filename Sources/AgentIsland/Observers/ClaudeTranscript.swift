@@ -61,6 +61,16 @@ enum ClaudeTranscript {
     /// `Stop` hook event is the authoritative signal; this only backs it up
     /// when the hook is not installed, and the caller additionally requires
     /// the transcript to have gone quiet first.
+    /// Where the conversation runs ("claude-desktop", "cli", ...), as the
+    /// transcript records it. The newest value wins: a session can be resumed
+    /// from a different host.
+    static func entrypoint(_ records: [[String: Any]]) -> String? {
+        for record in records.reversed() {
+            if let value = record["entrypoint"] as? String, !value.isEmpty { return value }
+        }
+        return nil
+    }
+
     static func endsWithAssistantText(_ records: [[String: Any]]) -> Bool {
         for record in records.reversed() {
             guard conversationRecordTypes.contains(record["type"] as? String ?? ""),
@@ -135,7 +145,7 @@ enum ClaudeTranscript {
         switch tool.name {
         case "Bash":
             guard let command = text("command") else { return "🔧 Bash" }
-            var line = "🖥 执行命令: " + shorten(command, limit: 160)
+            var line = "🖥 执行命令: " + shorten(command, limit: 600)
             if let note = text("description") { line += "\n   " + shorten(note, limit: 120) }
             return clamp(line)
         case "Edit", "Write", "NotebookEdit":

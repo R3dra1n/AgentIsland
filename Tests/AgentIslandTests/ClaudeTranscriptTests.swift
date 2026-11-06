@@ -122,7 +122,7 @@ final class ClaudeTranscriptTests: XCTestCase {
     }
 
     func testMultilineCommandIsFlattenedAndBounded() throws {
-        let long = String(repeating: "x", count: 500)
+        let long = String(repeating: "x", count: 900)
         let bash = ClaudeTranscript.PendingTool(id: "t", name: "Bash",
             input: ["command": "line one\n\n   line two " + long])
         let detail = try XCTUnwrap(ClaudeTranscript.activityDetail(bash))

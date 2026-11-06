@@ -71,7 +71,44 @@ final class AntigravityViewedMonitor {
         }
     }
 
-    static func sessionID(for url: URL?) -> String? {
+    /// Best effort: presses the sidebar link of one conversation so the
+    /// Antigravity window shows that conversation rather than whichever it had
+    /// open. Needs the Accessibility permission and a sidebar that exposes its
+    /// links; returns false when the link cannot be found, and the caller then
+    /// just brings the window forward.
+    nonisolated static func pressConversationLink(sessionID target: String, pid: pid_t) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        let root = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(root, 0.2)
+        var budget = 6000
+        func children(of element: AXUIElement) -> [AXUIElement] {
+            var value: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value) == .success,
+                  let array = value as? [AXUIElement] else { return [] }
+            return array
+        }
+        func walk(_ element: AXUIElement, depth: Int) -> Bool {
+            guard budget > 0, depth < 40 else { return false }
+            budget -= 1
+            var role: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role) == .success,
+               role as? String == "AXLink" {
+                var link: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, kAXURLAttribute as CFString, &link) != .success {
+                    _ = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &link)
+                }
+                let text = (link as? URL)?.absoluteString ?? (link as? String)
+                if sessionID(forRawURL: text) == target {
+                    return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+                }
+            }
+            for child in children(of: element) where walk(child, depth: depth + 1) { return true }
+            return false
+        }
+        return walk(root, depth: 0)
+    }
+
+    nonisolated static func sessionID(for url: URL?) -> String? {
         guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               ["localhost", "127.0.0.1", "::1", "[::1]"].contains(url.host?.lowercased() ?? "") else { return nil }
         let parts = url.path.split(separator: "/")
@@ -80,7 +117,7 @@ final class AntigravityViewedMonitor {
         return "ag:" + digest
     }
 
-    static func sessionID(forRawURL value: String?) -> String? {
+    nonisolated static func sessionID(forRawURL value: String?) -> String? {
         guard let value else { return nil }
         let text: String
         if value.hasPrefix("127.0.0.1:") || value.hasPrefix("localhost:") || value.hasPrefix("[::1]:") {

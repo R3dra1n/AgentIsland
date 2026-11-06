@@ -81,6 +81,52 @@ extension AppState {
                                            expectedDetail: expectedDetail, expectedQuestion: expectedQuestion)
     }
 
+    /// Where "open" should take the user for one Claude conversation.
+    enum ClaudeOpenTarget: Equatable { case desktopApp, desktopNeedsInput, terminal }
+
+    nonisolated static func claudeOpenTarget(entrypoint: String?, state: AIState) -> ClaudeOpenTarget {
+        guard let entrypoint, entrypoint.lowercased().contains("desktop") else { return .terminal }
+        return state == .awaitingInput ? .desktopNeedsInput : .desktopApp
+    }
+
+    /// Opens the window behind one HUD row, as precisely as the host allows:
+    /// Codex jumps to the thread, Antigravity presses the conversation's own
+    /// sidebar link (falling back to the app), and Claude goes to the app the
+    /// conversation actually runs in. No assistant offers a per-session link
+    /// for Claude, so that one can only bring the right app forward.
+    public func focusSession(_ row: AIObserverItem) {
+        if row.id.hasPrefix(Self.antigravitySessionPrefix) {
+            let id = String(row.id.dropFirst(Self.antigravitySessionPrefix.count))
+            let app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.google.antigravity" }
+            focusApp(for: "antigravity")
+            if let pid = app?.processIdentifier {
+                Task.detached {
+                    // Give the window a moment to come forward before pressing.
+                    try? await Task.sleep(for: .milliseconds(300))
+                    _ = AntigravityViewedMonitor.pressConversationLink(sessionID: id, pid: pid)
+                }
+            }
+        } else if row.id.hasPrefix(Self.claudeSessionPrefix) {
+            let id = String(row.id.dropFirst(Self.claudeSessionPrefix.count))
+            let session = claudeSessions.first { $0.id == id }
+            switch Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: row.state) {
+            case .desktopNeedsInput:
+                if let url = URL(string: "claude://code/needs-input?source=desktop_action") { NSWorkspace.shared.open(url) }
+            case .desktopApp:
+                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
+                    let config = NSWorkspace.OpenConfiguration(); config.activates = true
+                    NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+                } else { focusApp(for: "claude") }
+            case .terminal:
+                focusApp(for: "claude")
+            }
+        } else if row.id == "claude" || row.icon == "claude" {
+            focusApp(for: "claude")
+        } else {
+            focusApp(for: row.icon == "antigravity" ? "antigravity" : row.id)
+        }
+    }
+
     public func focusApp(for observerId: String) {
         let runningApps = NSWorkspace.shared.runningApplications
         if observerId == "codex" {

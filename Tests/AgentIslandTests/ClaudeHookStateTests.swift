@@ -150,6 +150,103 @@ final class ClaudeHookStateTests: XCTestCase {
         XCTAssertEqual(reading.turnState, .awaitingInput)
     }
 
+    // The reported defect. A real PermissionRequest carries only the tool name,
+    // never a tool_use_id, while the completion that resolves it carries the id.
+    // Keyed by name, the two never matched and the approval stayed pending after
+    // the user had already allowed it and the command had finished.
+    func testPermissionWithoutAnIDIsResolvedByTheCallItFollowed() {
+        var state = ClaudeHookState()
+        state.consume(event("PreToolUse", tool: "Bash", useID: "toolu_A"))
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 1))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(1)), ["Bash"])
+        // Nothing is recorded between approving and the command finishing, so
+        // the row necessarily reads as waiting for that whole time.
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(40)), ["Bash"])
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_A", at: 46))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(46)).isEmpty)
+        XCTAssertEqual(state.turnState(session: session, now: clock.addingTimeInterval(46)), .running)
+    }
+
+    // A call that needed no permission finishing must not clear another call's.
+    func testAnotherCallsCompletionDoesNotResolveThePermission() {
+        var state = ClaudeHookState()
+        state.consume(event("PreToolUse", tool: "Write", useID: "toolu_W"))
+        state.consume(event("PreToolUse", tool: "Bash", useID: "toolu_B", at: 1))
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 2))
+        state.consume(event("PostToolUse", tool: "Write", useID: "toolu_W", at: 3))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(3)), ["Bash"])
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_B", at: 4))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(4)).isEmpty)
+    }
+
+    // Two calls of the same tool: each permission claims its own call, newest
+    // first, and finishing one leaves the other waiting.
+    func testTwoPermissionsForTheSameToolEachClaimTheirOwnCall() {
+        var state = ClaudeHookState()
+        state.consume(event("PreToolUse", tool: "Bash", useID: "toolu_1"))
+        state.consume(event("PreToolUse", tool: "Bash", useID: "toolu_2", at: 1))
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 2))
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 3))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(3)).count, 2)
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_2", at: 4))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(4)).count, 1)
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_1", at: 5))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(5)).isEmpty)
+    }
+
+    // A permission whose PreToolUse was never seen (the hook was installed
+    // mid-call) is resolved by the next completion of the same tool.
+    func testPermissionWithNoPrecedingCallIsResolvedByTheSameToolFinishing() {
+        var state = ClaudeHookState()
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock), ["Bash"])
+        state.consume(event("PostToolUse", tool: "Edit", useID: "toolu_E", at: 1))
+        XCTAssertEqual(state.awaitingApproval(session: session, now: clock.addingTimeInterval(1)), ["Bash"],
+                       "另一种工具的完成不应解除它")
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_X", at: 2))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(2)).isEmpty)
+    }
+
+    // A refused permission ends the call the same way, and a turn that stops
+    // clears whatever is left, including the open-call bookkeeping.
+    func testTurnEndClearsPermissionsAndOpenCalls() {
+        var state = ClaudeHookState()
+        state.consume(event("PreToolUse", tool: "Bash", useID: "toolu_A"))
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 1))
+        state.consume(event("Stop", tool: nil, useID: nil, at: 2))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(2)).isEmpty)
+        // A permission after the stop must not be attached to the forgotten call.
+        state.consume(event("PermissionRequest", tool: "Bash", useID: nil, at: 3))
+        state.consume(event("PostToolUse", tool: "Bash", useID: "toolu_A", at: 4))
+        XCTAssertTrue(state.awaitingApproval(session: session, now: clock.addingTimeInterval(4)).isEmpty)
+    }
+
+    // End to end through the journal, with events shaped exactly as the
+    // recorder writes them: no tool_use_id on the permission request.
+    func testJournalReplayOfARealShapedApprovalEndsResolved() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+        func line(_ object: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: object) + Data([0x0a]) }
+        var data = Data()
+        data += try line(["hook_event_name": "PreToolUse", "session_id": session, "tool_name": "Bash",
+                          "tool_use_id": "toolu_R", "received_at": clock.timeIntervalSince1970])
+        data += try line(["hook_event_name": "PermissionRequest", "session_id": session, "tool_name": "Bash",
+                          "command_digest": String(repeating: "a", count: 64), "turn_id": "p1",
+                          "received_at": clock.timeIntervalSince1970 + 1])
+        try data.write(to: url)
+        let journal = ClaudeHookJournal(url: url)
+        let waiting = await journal.reading(session: session, now: clock.addingTimeInterval(2))
+        XCTAssertEqual(waiting.awaitingApproval, ["Bash"])
+
+        let finished = try line(["hook_event_name": "PostToolUse", "session_id": session, "tool_name": "Bash",
+                                 "tool_use_id": "toolu_R", "received_at": clock.timeIntervalSince1970 + 46])
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.seekToEnd(); try handle.write(contentsOf: finished); try handle.close()
+        let after = await journal.reading(session: session, now: clock.addingTimeInterval(47))
+        XCTAssertTrue(after.awaitingApproval.isEmpty)
+        XCTAssertEqual(after.turnState, .running)
+    }
+
     // The journal is the on-disk half: a missing file means the hook is simply
     // not installed, which must not be reported as an outstanding approval.
     func testJournalWithoutAFileReportsNothingOutstanding() async {
@@ -185,5 +282,21 @@ final class ClaudeHookStateTests: XCTestCase {
         try append(event("PostToolUse", at: 1))
         result = await journal.awaitingApproval(session: session, now: clock)
         XCTAssertTrue(result.isEmpty)
+    }
+}
+
+final class ClaudeOpenRoutingTests: XCTestCase {
+    func testDesktopSessionOpensTheDesktopApp() {
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: "claude-desktop", state: .completed), .desktopApp)
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: "claude-desktop", state: .awaitingInput), .desktopNeedsInput)
+    }
+    func testTerminalAndUnknownSessionsUseTheTerminal() {
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: "cli", state: .awaitingInput), .terminal)
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: nil, state: .completed), .terminal)
+    }
+    func testEntrypointTakesTheNewestValue() {
+        let records: [[String: Any]] = [["entrypoint": "cli"], ["type": "user"], ["entrypoint": "claude-desktop"]]
+        XCTAssertEqual(ClaudeTranscript.entrypoint(records), "claude-desktop")
+        XCTAssertNil(ClaudeTranscript.entrypoint([["type": "user"]]))
     }
 }

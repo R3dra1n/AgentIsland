@@ -16,10 +16,21 @@ struct ClaudeHookState: Sendable {
     /// denied, the turn stops, or the user types again.
     private struct Outstanding: Sendable {
         var toolName: String?
+        /// The tool call this permission belongs to, when it could be worked out.
+        var toolUseID: String?
         var at: Date
     }
 
     private var outstanding: [String: [String: Outstanding]] = [:]
+    /// Tool calls that have started and not yet finished, per session. A
+    /// `PermissionRequest` event carries no `tool_use_id` of its own (only the
+    /// tool name), but is always preceded by the `PreToolUse` of the same call;
+    /// this is how the permission is tied back to the call whose completion
+    /// resolves it. Keying it by tool name instead meant the completion, which
+    /// does carry an id, never matched and the permission stayed pending for
+    /// 30 minutes.
+    private var openTools: [String: [String: (name: String?, at: Date)]] = [:]
+    private static let maximumOpenTools = 64
     private var lastEventAt: [String: Date] = [:]
     /// The turn's lifecycle as the host itself reports it. The transcript
     /// cannot supply this: the assistant's text and its tool call are separate
@@ -44,33 +55,70 @@ struct ClaudeHookState: Sendable {
         guard date >= lastEventAt[session] ?? .distantPast else { return }
         lastEventAt[session] = date
         if name == "SessionEnd" { ended[session] = date } else { ended.removeValue(forKey: session) }
-        let key = (event["tool_use_id"] as? String) ?? (event["tool_name"] as? String)
+        let toolUseID = event["tool_use_id"] as? String
+        let toolName = event["tool_name"] as? String
         switch name {
         case "PermissionRequest":
-            guard let key else { return }
-            outstanding[session, default: [:]][key] = Outstanding(toolName: event["tool_name"] as? String, at: date)
+            guard toolName != nil || toolUseID != nil else { return }
+            var id = toolUseID
+            if id == nil, let toolName { id = newestOpenTool(session: session, named: toolName) }
+            let key = id ?? "\(toolName ?? "?")#\(timestamp)"
+            outstanding[session, default: [:]][key] = Outstanding(toolName: toolName, toolUseID: id, at: date)
             turn[session] = (.awaitingInput, date)
         case "PostToolUse":
-            guard let key else { return }
-            outstanding[session]?.removeValue(forKey: key)
+            // Resolve by the call's id; failing that, by the oldest permission
+            // for the same tool that could not be tied to a call.
+            if let toolUseID {
+                openTools[session]?.removeValue(forKey: toolUseID)
+                if outstanding[session]?.removeValue(forKey: toolUseID) == nil { resolveUnattributed(session: session, toolName: toolName) }
+            } else {
+                resolveUnattributed(session: session, toolName: toolName)
+            }
             turn[session] = (outstanding[session]?.isEmpty == false ? .awaitingInput : .running, date)
         case "PreToolUse":
+            if let toolUseID {
+                if openTools[session, default: [:]].count >= Self.maximumOpenTools {
+                    if let oldest = openTools[session]?.min(by: { $0.value.at < $1.value.at })?.key { openTools[session]?.removeValue(forKey: oldest) }
+                }
+                openTools[session, default: [:]][toolUseID] = (toolName, date)
+            }
             turn[session] = (outstanding[session]?.isEmpty == false ? .awaitingInput : .running, date)
         case "UserPromptSubmit", "SessionStart":
             outstanding.removeValue(forKey: session)
+            openTools.removeValue(forKey: session)
             turn[session] = (.running, date)
         case "Stop":
             outstanding.removeValue(forKey: session)
+            openTools.removeValue(forKey: session)
             // The recorder flags a failed turn when translating `StopFailure`.
             let failed = event["has_error"] as? Bool == true
             turn[session] = (failed ? .failed : .completed, date)
         case "SessionEnd":
             outstanding.removeValue(forKey: session)
+            openTools.removeValue(forKey: session)
             turn.removeValue(forKey: session)
         default:
             return
         }
         if outstanding[session]?.isEmpty == true { outstanding.removeValue(forKey: session) }
+    }
+
+    /// The most recent started-and-unfinished call of this tool that no
+    /// permission has claimed yet.
+    private func newestOpenTool(session: String, named name: String) -> String? {
+        let claimed = Set(outstanding[session]?.values.compactMap(\.toolUseID) ?? [])
+        return openTools[session]?
+            .filter { $0.value.name == name && !claimed.contains($0.key) }
+            .max { $0.value.at < $1.value.at }?.key
+    }
+
+    /// Resolves the oldest permission for `toolName` that has no call attached.
+    private mutating func resolveUnattributed(session: String, toolName: String?) {
+        guard let toolName,
+              let key = outstanding[session]?
+                .filter({ $0.value.toolUseID == nil && $0.value.toolName == toolName })
+                .min(by: { $0.value.at < $1.value.at })?.key else { return }
+        outstanding[session]?.removeValue(forKey: key)
     }
 
     /// The host-reported turn state for one session, or nil when the hook has

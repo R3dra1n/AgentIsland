@@ -10,6 +10,8 @@ struct ClaudeSessionSnapshot: Identifiable, Equatable, Sendable {
     let actionDetail: String?
     let lastActiveDate: Date?
     var completedAt: Date? = nil
+    /// Where the conversation runs, from the transcript; decides what "open" means.
+    var entrypoint: String? = nil
 }
 
 /// Decides what one conversation is doing from the facts read out of its
@@ -112,6 +114,7 @@ actor ClaudeSessionScanner {
         var size: UInt64
         var pending: [ClaudeTranscript.PendingTool]
         var endsWithAssistantText: Bool
+        var entrypoint: String?
     }
 
     private let projects: URL
@@ -138,7 +141,8 @@ actor ClaudeSessionScanner {
                 let records = ClaudeTranscript.readRecords(of: url)
                 entry = Entry(modified: modified, size: size,
                               pending: ClaudeTranscript.pendingTools(records),
-                              endsWithAssistantText: ClaudeTranscript.endsWithAssistantText(records))
+                              endsWithAssistantText: ClaudeTranscript.endsWithAssistantText(records),
+                              entrypoint: ClaudeTranscript.entrypoint(records))
                 entries[url] = entry
             }
             if let entry { observed.append((url.deletingPathExtension().lastPathComponent, modified, entry)) }
@@ -147,9 +151,11 @@ actor ClaudeSessionScanner {
         entries = entries.filter { live.contains($0.key) }
         let readings = await journal.readings(sessions: observed.map(\.id), now: now)
         return observed.compactMap { item in
-            ClaudeSessionEvaluator.evaluate(id: item.id, modified: item.modified, pending: item.entry.pending,
-                                            endsWithAssistantText: item.entry.endsWithAssistantText,
-                                            hook: readings[item.id] ?? .init(), now: now)
+            var snapshot = ClaudeSessionEvaluator.evaluate(id: item.id, modified: item.modified, pending: item.entry.pending,
+                                                           endsWithAssistantText: item.entry.endsWithAssistantText,
+                                                           hook: readings[item.id] ?? .init(), now: now)
+            snapshot?.entrypoint = item.entry.entrypoint
+            return snapshot
         }
     }
 
