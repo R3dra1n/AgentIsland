@@ -129,7 +129,7 @@ public struct PopoverContentView: View {
         case "antigravity":
             OpenUsageProviderCard(icon: "antigravity", name: "Antigravity", tier: "Pro", isEnabled: $appState.antigravityEnabled, state: appState.antigravityState, description: appState.antigravityDescription, onAcknowledge: { appState.acknowledgeAntigravity() }, onApprove: { appState.approve(for: "antigravity") }, onReject: { appState.reject(for: "antigravity") }, onFocus: { appState.focusApp(for: "antigravity") })
         case "claude":
-            OpenUsageProviderCard(icon: "claude", name: "Claude", tier: appState.claudeTier, isEnabled: $appState.claudeEnabled, state: appState.claudeState, description: appState.claudeDescription, onAcknowledge: { appState.acknowledgeClaude() }, onApprove: { appState.approve(for: "claude") }, onReject: { appState.reject(for: "claude") }, onFocus: { appState.focusApp(for: "claude") })
+            OpenUsageProviderCard(icon: "claude", name: "Claude", tier: appState.claudeTier, isEnabled: $appState.claudeEnabled, state: appState.claudeState, description: appState.claudeDescription, onAcknowledge: { appState.acknowledgeClaude() }, onApprove: { appState.approve(for: "claude") }, onReject: { appState.reject(for: "claude") }, onFocus: { appState.openClaudeConversation() })
         case "cursor":
             OpenUsageProviderCard(icon: "cursor", name: "Cursor", tier: "Agent", isEnabled: $appState.cursorEnabled, state: appState.cursorState, description: appState.cursorDescription, onAcknowledge: { appState.acknowledgeCursor() }, onApprove: { appState.approve(for: "cursor") }, onReject: { appState.reject(for: "cursor") }, onFocus: { appState.focusApp(for: "cursor") })
         case "windsurf":

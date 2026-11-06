@@ -107,23 +107,37 @@ extension AppState {
                 }
             }
         } else if row.id.hasPrefix(Self.claudeSessionPrefix) {
-            let id = String(row.id.dropFirst(Self.claudeSessionPrefix.count))
-            let session = claudeSessions.first { $0.id == id }
-            switch Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: row.state) {
-            case .desktopNeedsInput:
-                if let url = URL(string: "claude://code/needs-input?source=desktop_action") { NSWorkspace.shared.open(url) }
-            case .desktopApp:
-                if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
-                    let config = NSWorkspace.OpenConfiguration(); config.activates = true
-                    NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-                } else { focusApp(for: "claude") }
-            case .terminal:
-                focusApp(for: "claude")
-            }
+            openClaude(session: claudeSessions.first { $0.id == String(row.id.dropFirst(Self.claudeSessionPrefix.count)) })
         } else if row.id == "claude" || row.icon == "claude" {
-            focusApp(for: "claude")
+            // The provider-level row (one conversation, or the folded icon)
+            // has no session id; use the one that most needs attention.
+            openClaude(session: Self.mostRelevantClaudeSession(claudeSessions))
         } else {
             focusApp(for: row.icon == "antigravity" ? "antigravity" : row.id)
+        }
+    }
+
+    nonisolated static func mostRelevantClaudeSession(_ sessions: [ClaudeSessionSnapshot]) -> ClaudeSessionSnapshot? {
+        sessions.sorted { a, b in
+            let rank: (AIState) -> Int = { $0 == .awaitingInput ? 0 : ($0 == .running ? 1 : 2) }
+            if rank(a.state) != rank(b.state) { return rank(a.state) < rank(b.state) }
+            return (a.lastActiveDate ?? .distantPast) > (b.lastActiveDate ?? .distantPast)
+        }.first
+    }
+
+    public func openClaudeConversation() { openClaude(session: Self.mostRelevantClaudeSession(claudeSessions)) }
+
+    private func openClaude(session: ClaudeSessionSnapshot?) {
+        switch Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle) {
+        case .desktopNeedsInput:
+            if let url = URL(string: "claude://code/needs-input?source=desktop_action") { NSWorkspace.shared.open(url) }
+        case .desktopApp:
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
+                let config = NSWorkspace.OpenConfiguration(); config.activates = true
+                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+            } else { focusApp(for: "claude") }
+        case .terminal:
+            focusApp(for: "claude")
         }
     }
 

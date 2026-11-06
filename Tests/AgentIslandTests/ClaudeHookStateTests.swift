@@ -300,3 +300,18 @@ final class ClaudeOpenRoutingTests: XCTestCase {
         XCTAssertNil(ClaudeTranscript.entrypoint([["type": "user"]]))
     }
 }
+
+final class ClaudeMostRelevantSessionTests: XCTestCase {
+    private func snap(_ id: String, _ state: AIState, _ age: TimeInterval, _ entry: String?) -> ClaudeSessionSnapshot {
+        ClaudeSessionSnapshot(id: id, state: state, description: "", actionDetail: nil,
+                              lastActiveDate: Date(timeIntervalSince1970: 1000 - age), entrypoint: entry)
+    }
+    func testAwaitingBeatsRunningBeatsCompleted() {
+        let picked = AppState.mostRelevantClaudeSession([snap("a", .completed, 1, "cli"), snap("b", .awaitingInput, 50, "claude-desktop"), snap("c", .running, 0, "cli")])
+        XCTAssertEqual(picked?.id, "b")
+    }
+    func testNewestWinsWithinTheSameState() {
+        XCTAssertEqual(AppState.mostRelevantClaudeSession([snap("old", .completed, 90, "cli"), snap("new", .completed, 5, "claude-desktop")])?.id, "new")
+        XCTAssertNil(AppState.mostRelevantClaudeSession([]))
+    }
+}
