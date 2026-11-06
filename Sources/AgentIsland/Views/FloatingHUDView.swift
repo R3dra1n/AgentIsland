@@ -1,15 +1,15 @@
 import SwiftUI
 
-private struct HUDContentSizeKey: PreferenceKey {
-    static let defaultValue: CGSize = .zero
-    static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
-        value = nextValue()
-    }
-}
-
+/// The floating HUD: one black capsule that morphs between a small pill of
+/// status dots and an open list of rows. Which rows exist is decided by
+/// `AppState.displayedObservers` (see `docs/hud-session-rows.md`); this view only
+/// draws them. The look and motion numbers are in `HUDStyle`.
 public struct FloatingHUDView: View {
     @ObservedObject var appState: AppState
-    @State private var isPulsing = false
+    /// Tapped open by the user while nothing needs them. Closes again on a second
+    /// tap, or by itself once something does need them and then is dealt with.
+    @State private var manuallyOpen = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let onContentSizeChange: (CGSize) -> Void
 
     public init(appState: AppState, onContentSizeChange: @escaping (CGSize) -> Void = { _ in }) {
@@ -21,26 +21,23 @@ public struct FloatingHUDView: View {
         return appState.displayedObservers
     }
 
-    private var hasAwaitingInput: Bool {
-        itemsToShow.contains(where: { $0.state == .awaitingInput })
-    }
-
-    private var dominantState: AIState {
-        itemsToShow.map(\.state).max() ?? .idle
-    }
-
-    private struct HUDGroup: Identifiable {
+    /// One dot per assistant: several conversations of one assistant share a dot
+    /// that takes the colour of the most pressing of them.
+    private struct HUDDot: Identifiable {
         let id: String
-        var items: [AIObserverItem]
+        let name: String
+        var state: AIState
     }
 
-    private var groups: [HUDGroup] {
-        var result: [HUDGroup] = []
-        for item in itemsToShow {
-            if item.icon == "antigravity", let index = result.firstIndex(where: { $0.id == "antigravity" }) {
-                result[index].items.append(item)
+    private func dots(for items: [AIObserverItem]) -> [HUDDot] {
+        var result: [HUDDot] = []
+        for item in items {
+            let key = item.icon
+            if let index = result.firstIndex(where: { $0.id == key }) {
+                if item.state > result[index].state { result[index].state = item.state }
             } else {
-                result.append(HUDGroup(id: item.icon == "antigravity" ? "antigravity" : item.id, items: [item]))
+                let name = item.name.components(separatedBy: " · ").first ?? item.name
+                result.append(HUDDot(id: key, name: item.id.hasPrefix(AppState.overflowPrefix) ? key : name, state: item.state))
             }
         }
         return result
@@ -60,7 +57,7 @@ public struct FloatingHUDView: View {
         let claudeSessionRow = item.id.hasPrefix(AppState.claudeSessionPrefix)
         let provider = item.icon == "antigravity" ? "antigravity" : (claudeSessionRow ? "claude" : item.id)
         let sessionRow = item.id.hasPrefix(AppState.antigravitySessionPrefix)
-        AISegmentView(appState: appState, item: item, isPulsing: isPulsing,
+        AISegmentView(appState: appState, item: item,
             // With several Claude Code conversations a blind keystroke cannot
             // be aimed at the right one, so a conversation's row only brings
             // the original window forward instead of approving by key press.
@@ -80,73 +77,90 @@ public struct FloatingHUDView: View {
             })
     }
 
+    private var maximumOpenHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - 200
+    }
+
     public var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: true) {
+        let items = itemsToShow
+        let lights = dots(for: items)
+        let opensByItself = HUDStyle.opensAutomatically(items.map(\.state))
+        let isOpen = opensByItself || manuallyOpen
+        let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
+        let openHeight = HUDStyle.openHeight(rows: items.count)
+        let rowsNeedScroll = openHeight > capsule.height && isOpen
+        let shape = RoundedRectangle(cornerRadius: isOpen ? HUDStyle.openCornerRadius : HUDStyle.closedCornerRadius, style: .continuous)
+        let morph: Animation? = reduceMotion ? nil : HUDStyle.morph
+
+        ZStack(alignment: .top) {
+            // Closed layer: one dot per assistant.
+            HStack(spacing: HUDStyle.dotSpacing) {
+                ForEach(lights) { dot in
+                    HUDDotView(state: dot.state, reduceMotion: reduceMotion)
+                        .help("\(dot.name)：\(dot.state.title)")
+                }
+            }
+            .frame(width: capsule.width, height: HUDStyle.closedSize.height)
+            .opacity(isOpen ? 0 : 1)
+            .animation(reduceMotion ? nil : HUDStyle.dotsFade, value: isOpen)
+            .allowsHitTesting(!isOpen)
+            .accessibilityHidden(isOpen)
+
+            // Open layer: laid out at its full size and revealed by the capsule
+            // growing over it, so the rows never squash while it morphs.
             Group {
-                if appState.hudLayoutMode == .vertical {
-                    VStack(spacing: 8) {
-                        ForEach(Array(itemsToShow.enumerated()), id: \.element.id) { index, item in
-                            if index > 0 {
-                                Rectangle().fill(Color.white.opacity(0.18))
-                                    .frame(width: appState.hudDetailMode == .full ? 150 : 60, height: 1)
-                            }
-                            segment(item)
-                        }
-                    }
+                if rowsNeedScroll {
+                    ScrollView(.vertical, showsIndicators: false) { rowsStack(items) }
                 } else {
-                    HStack(alignment: .center, spacing: 12) {
-                        ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
-                            if index > 0 { Rectangle().fill(Color.white.opacity(0.18)).frame(width: 1, height: 22) }
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(group.items) { item in segment(item) }
-                            }
-                        }
-                    }
+                    rowsStack(items)
                 }
             }
-            .fixedSize()
-            .padding(.horizontal, 32)
-            .padding(.vertical, 11)
-            .background(
-                ZStack {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(Color(NSColor.windowBackgroundColor).opacity(0.88 * appState.hudOpacity))
-                    if appState.showHUDGlow {
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.9 : 0.4) :
-                                (dominantState == .running ? Color.yellow.opacity(0.6) :
-                                (dominantState == .completed ? Color.green.opacity(0.7) : Color.white.opacity(0.12))),
-                                lineWidth: dominantState != .idle ? 2.0 : 1.2)
-                            .shadow(color: hasAwaitingInput ? Color.red.opacity(isPulsing ? 0.6 : 0.2) : Color.clear,
-                                    radius: 12, x: 0, y: 2)
-                    }
-                }
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            #if AGENTISLAND_ISOLATED_PREVIEW
-            .overlay(alignment: .bottom) {
-                Text("隔离测试版").font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow).offset(y: 13)
-            }
-            #endif
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
-            .padding(.top, 4)
-            // Measure the unconstrained content, not the ScrollView viewport.
-            // Session names, feedback and action buttons can exceed any fixed
-            // per-provider width estimate.
-            .background(GeometryReader { geometry in
-                Color.clear.preference(key: HUDContentSizeKey.self, value: geometry.size)
-            })
+            .frame(width: HUDStyle.openWidth, height: rowsNeedScroll ? capsule.height : openHeight, alignment: .top)
+            .opacity(isOpen ? 1 : 0)
+            .animation(reduceMotion ? nil : HUDStyle.rowsFade(opening: isOpen), value: isOpen)
+            .allowsHitTesting(isOpen)
+            .accessibilityHidden(!isOpen)
         }
-        .onPreferenceChange(HUDContentSizeKey.self, perform: onContentSizeChange)
+        .frame(width: capsule.width, height: capsule.height, alignment: .top)
+        .background(
+            shape
+                .fill(Color.black.opacity(appState.hudOpacity))
+                .shadow(color: .black.opacity(0.5), radius: 17, x: 0, y: 10)
+        )
+        .clipShape(shape)
+        .contentShape(shape)
+        .onTapGesture {
+            if !opensByItself { manuallyOpen.toggle() }
+        }
+        #if AGENTISLAND_ISOLATED_PREVIEW
+        .overlay(alignment: .bottom) {
+            Text("隔离测试版").font(.system(size: 9, weight: .bold)).foregroundStyle(.yellow)
+                .fixedSize().offset(y: 16).allowsHitTesting(false)
+        }
+        #endif
+        .animation(morph, value: isOpen)
+        .animation(morph, value: items.count)
+        .animation(morph, value: lights.count)
+        .padding(HUDStyle.windowMargin)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contextMenu { contextMenuItems() }
-        .animation(.easeInOut(duration: 0.25), value: itemsToShow)
-        .onAppear { isPulsing = true }
-        .onChange(of: hasAwaitingInput) { _, newValue in
-            if newValue {
-                withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { isPulsing = true }
+        .onChange(of: opensByItself) { _, now in
+            if !now { manuallyOpen = false }
+        }
+        .onChange(of: HUDStyle.windowSize(for: capsule), initial: true) { _, size in
+            onContentSizeChange(size)
+        }
+    }
+
+    private func rowsStack(_ items: [AIObserverItem]) -> some View {
+        VStack(spacing: HUDStyle.rowSpacing) {
+            ForEach(items) { item in
+                segment(item)
+                    .transition(.opacity)
             }
         }
+        .padding(HUDStyle.containerPadding)
+        .frame(width: HUDStyle.openWidth)
     }
 
     @ViewBuilder
@@ -171,9 +185,67 @@ public struct FloatingHUDView: View {
     }
 }
 
-/// The "+N" mark for conversations that did not fit in an assistant's rows. It
-/// takes the colour of the worst state it hides, so a conversation that needs
-/// the user is never buried, and opens a list of what it holds.
+/// A 10 pt status light. A running one breathes: opacity 1 → 0.45 and scale
+/// 1 → 0.8 over 1.4 s, forever (held still under Reduce Motion).
+struct HUDDotView: View {
+    let state: AIState
+    var reduceMotion: Bool = false
+    @State private var dim = false
+
+    private var shouldPulse: Bool { state == .running && !reduceMotion }
+
+    var body: some View {
+        Circle()
+            .fill(HUDStyle.light(for: state))
+            .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
+            .opacity(dim ? HUDStyle.pulseOpacity : 1)
+            .scaleEffect(dim ? HUDStyle.pulseScale : 1)
+            .onChange(of: shouldPulse, initial: true) { _, pulse in
+                if pulse {
+                    withAnimation(HUDStyle.pulse) { dim = true }
+                } else {
+                    withAnimation(.easeOut(duration: 0.15)) { dim = false }
+                }
+            }
+            .accessibilityLabel(state.title)
+    }
+}
+
+/// Capsule button used on the HUD's rows. Primary (approve / open) is white with
+/// black text, secondary (deny / mark viewed) is white at 14% with light text.
+/// Built on a real `Button`, so keyboard focus and its ring keep working.
+struct HUDPillButtonStyle: ButtonStyle {
+    var primary: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .medium))
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(primary ? HUDStyle.primaryButtonText : HUDStyle.secondaryButtonText)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(primary ? HUDStyle.primaryButtonFill : HUDStyle.secondaryButtonFill))
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .contentShape(Capsule())
+    }
+}
+
+extension View {
+    /// The row chrome: 52 pt tall, 15 pt corners, 12 pt side padding, a faint
+    /// white fill (red when the row needs the user).
+    func hudRowChrome(state: AIState) -> some View {
+        self
+            .padding(.horizontal, HUDStyle.rowHorizontalPadding)
+            .frame(maxWidth: .infinity)
+            .frame(height: HUDStyle.rowHeight)
+            .background(RoundedRectangle(cornerRadius: HUDStyle.rowCornerRadius, style: .continuous).fill(HUDStyle.rowFill(for: state)))
+    }
+}
+
+/// The "+N" row for conversations that did not fit in an assistant's rows. Its
+/// light takes the colour of the worst state it hides, so a conversation that
+/// needs the user is never buried, and it opens a list of what it holds.
 private struct OverflowChipView: View {
     @ObservedObject var appState: AppState
     let item: AIObserverItem
@@ -182,25 +254,28 @@ private struct OverflowChipView: View {
     private var providerID: String { String(item.id.dropFirst(AppState.overflowPrefix.count)) }
 
     var body: some View {
-        Button { showList.toggle() } label: {
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle().fill(item.state.color.opacity(0.2)).frame(width: 26, height: 26)
-                    AIIconView(provider: item.icon, size: 14, color: item.state.color)
-                }
+        HStack(spacing: HUDStyle.rowContentSpacing) {
+            HUDDotView(state: item.state)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
-                    .font(.system(size: 11, weight: .bold))
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(item.state.color.opacity(0.2))
-                    .foregroundColor(item.state.color)
-                    .clipShape(Capsule())
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(HUDStyle.nameColor)
+                    .lineLimit(1)
+                Text(item.description)
+                    .font(.system(size: 12))
+                    .foregroundColor(HUDStyle.secondaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("查看") { showList.toggle() }
+                .buttonStyle(HUDPillButtonStyle(primary: false))
+                .popover(isPresented: $showList, arrowEdge: .bottom) {
+                    OverflowSessionListView(appState: appState, providerID: providerID)
+                }
         }
-        .buttonStyle(.plain)
+        .hudRowChrome(state: item.state)
         .help("\(item.description)，点击查看")
-        .popover(isPresented: $showList, arrowEdge: .bottom) {
-            OverflowSessionListView(appState: appState, providerID: providerID)
-        }
     }
 }
 
@@ -245,7 +320,6 @@ private struct OverflowSessionListView: View {
 public struct AISegmentView: View {
     @ObservedObject var appState: AppState
     let item: AIObserverItem
-    let isPulsing: Bool
     var onApprove: (() -> Void)? = nil
     var onReject: (() -> Void)? = nil
     var onFocus: (() -> Void)? = nil
@@ -339,188 +413,57 @@ public struct AISegmentView: View {
         }
     }
 
-    public var body: some View {
-        HStack(spacing: 8) {
-            ZStack {
-                Circle()
-                    .fill(item.state.color.opacity(0.2))
-                    .frame(width: 26, height: 26)
-
-                if item.state == .running {
-                    Circle()
-                        .trim(from: 0, to: 0.75)
-                        .stroke(item.state.color, lineWidth: 2)
-                        .frame(width: 24, height: 24)
-                        .rotationEffect(.degrees(isPulsing ? 360 : 0))
-                        .animation(.linear(duration: 1.2).repeatForever(autoreverses: false), value: isPulsing)
-                }
-
-                if item.id == "antigravity" || item.icon == "antigravity" {
-                    AntigravityIconView(size: 14, color: item.state == .idle ? .secondary : item.state.color)
-                } else if ["claude", "codex", "cursor", "windsurf", "trae"].contains(item.id) || ["claude", "codex", "cursor", "windsurf", "trae"].contains(item.icon) {
-                    let provider = ["claude", "codex", "cursor", "windsurf", "trae"].contains(item.id) ? item.id : item.icon
-                    AIIconView(provider: provider, size: 14, color: item.state == .idle ? .secondary : item.state.color)
-                } else {
-                    Image(systemName: item.icon)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(item.state == .idle ? .secondary : item.state.color)
-                }
-            }
-
-            if appState.hudDetailMode == .full {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(item.name)
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-
-                        Group {
-                            if isAntigravity && item.state == .completed {
-                                Button(item.state.title) { onAcknowledge?() }.buttonStyle(.plain)
-                            } else { Text(item.state.title) }
-                        }
-                            .font(.system(size: 9, weight: .semibold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(item.state.color.opacity(0.2))
-                            .foregroundColor(item.state.color)
-                            .clipShape(Capsule())
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-
-                    if let detail = item.actionDetail, item.state == .awaitingInput {
-                        HStack(spacing: 4) {
-                            Text(rowFeedback ?? detail.components(separatedBy: "\n").first ?? detail)
-                                .font(.system(size: 10))
-                                .foregroundColor(.orange)
-                                .lineLimit(1)
-                                .frame(maxWidth: 200, alignment: .leading)
-                                .help(detail)
-
-                            if item.state == .awaitingInput {
-                                Button(action: { toggleDetail() }) {
-                                    Image(systemName: "list.bullet.circle.fill")
-                                        .font(.system(size: 11))
-                                        .foregroundColor(.orange.opacity(0.8))
-                                }
-                                .buttonStyle(.plain)
-                                .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                                    detailPopover(detail)
-                                }
-                            }
-                        }
-                        
-                        if item.id == "codex", let feedback = appState.codexActionFeedback, !feedback.isEmpty {
-                            Text(feedback).font(.system(size: 9)).foregroundColor(.red)
-                                .lineLimit(1).frame(maxWidth: 200)
-                        }
-                    } else {
-                        Text(item.description)
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                            .frame(maxWidth: 200, alignment: .leading)
-                            .help(item.actionDetail != nil ? "详情：\n\(item.actionDetail!)" : item.description)
-                    }
-                }
-            } else if appState.hudDetailMode == .concise && item.state != .idle {
-                HStack(spacing: 4) {
-                    if item.id.hasPrefix(AppState.antigravitySessionPrefix) || isClaudeSession {
-                        // Never truncate the name: the state and button beside it used to
-                        // squeeze it to "Claude ·…", which made two sessions look identical.
-                        Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                    Group {
-                        if isAntigravity && item.state == .completed {
-                            Button(item.state.title) { onAcknowledge?() }.buttonStyle(.plain)
-                        } else {
-                            Text(rowFeedback ?? (item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title))
-                        }
-                    }
-                        .lineLimit(1)
-                        .fixedSize(horizontal: item.id == "codex" && appState.codexActionFeedback == nil, vertical: false)
-                        .frame(maxWidth: 180)
-                        .help(item.id == "codex" ? (appState.codexActionFeedback ?? item.description) : item.description)
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(item.state.color.opacity(0.2))
-                        .foregroundColor(item.state.color)
-                        .clipShape(Capsule())
-                        
-                    if let detail = item.actionDetail, item.state == .awaitingInput {
-                        Button(action: { toggleDetail() }) {
-                            Image(systemName: "list.bullet.circle.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.orange.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
-                        .popover(isPresented: $showDetail, arrowEdge: .bottom) {
-                            detailPopover(detail)
-                        }
-                    }
-                }
-            }
-
-            if item.state == .awaitingInput {
-                HStack(spacing: 5) {
-                    Button(action: { if item.id == "codex" { showDetail.toggle() } else { onApprove?() } }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 9, weight: .bold))
-                            Text(item.id == "codex" ? "处理请求" : ((isAntigravity || isClaudeSession || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"))
-                                .font(.system(size: 10, weight: .bold))
-                                .lineLimit(1)
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3.5)
-                        .background(Color.red)
-                        .clipShape(Capsule())
-                        .shadow(color: .red.opacity(0.5), radius: isPulsing ? 5 : 2)
-                    }
-                    .buttonStyle(.plain)
-
-                    if !isAntigravity || appState.testModeActive {
-                    Button(action: { onReject?() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .foregroundColor(.secondary)
-                            .padding(4)
-                            .background(Color.secondary.opacity(0.25))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    }
-                }
-                .disabled(item.id == "codex" && appState.codexActionInFlight)
-            } else if item.state == .completed, onAcknowledge != nil {
-                if onFocus != nil {
-                    Button("打开") { onFocus?() }.buttonStyle(.plain).font(.system(size: 9))
-                }
-                Button(action: { onAcknowledge?() }) {
-                    HStack(spacing: 3) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 11, weight: .bold))
-                        Text(isAntigravity ? "已查看" : "待命")
-                            .font(.system(size: 9, weight: .semibold))
-                            .lineLimit(1)
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                    .foregroundColor(.green)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2.5)
-                    .background(Color.green.opacity(0.18))
-                    .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
+    /// The one line under the name. Full mode keeps the assistant's own wording
+    /// (the first line of the question while it waits); concise mode shows only
+    /// the state, or the reply feedback that replaces it.
+    private var secondaryText: String {
+        if let feedback = rowFeedback { return feedback }
+        if item.id == "codex", item.state == .awaitingInput, let feedback = appState.codexActionFeedback, !feedback.isEmpty {
+            return feedback
         }
+        if appState.hudDetailMode == .full {
+            if let detail = item.actionDetail, item.state == .awaitingInput {
+                return detail.components(separatedBy: "\n").first ?? detail
+            }
+            return item.description
+        }
+        if item.state == .idle || item.state == .unknown { return item.description }
+        return item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title
+    }
+
+    private var secondaryHelp: String {
+        if let detail = item.actionDetail, item.state == .awaitingInput { return detail }
+        if item.id == "codex" { return appState.codexActionFeedback ?? item.description }
+        return item.description
+    }
+
+    private var approveTitle: String {
+        if item.id == "codex" { return "处理请求" }
+        return (isAntigravity || isClaudeSession || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"
+    }
+
+    public var body: some View {
+        HStack(spacing: HUDStyle.rowContentSpacing) {
+            HUDDotView(state: item.state)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(HUDStyle.nameColor)
+                    .lineLimit(1)
+                Text(secondaryText)
+                    .font(.system(size: 12))
+                    .foregroundColor(HUDStyle.secondaryColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(secondaryHelp)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            actions
+        }
+        .hudRowChrome(state: item.state)
+        .accessibilityElement(children: .contain)
         .onChange(of: showDetail) { _, visible in
             if !visible, let id = presentedSessionID {
                 appState.discardAntigravityQuestion(forSession: id)
@@ -529,6 +472,43 @@ public struct AISegmentView: View {
         }
         .onDisappear {
             if let id = presentedSessionID { appState.discardAntigravityQuestion(forSession: id) }
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if item.state == .awaitingInput {
+            HStack(spacing: 6) {
+                if item.actionDetail != nil {
+                    Button(action: { toggleDetail() }) {
+                        Image(systemName: "list.bullet")
+                    }
+                    .buttonStyle(HUDPillButtonStyle(primary: false))
+                    .help("查看详情")
+                    .accessibilityLabel("查看详情")
+                    .popover(isPresented: $showDetail, arrowEdge: .bottom) {
+                        detailPopover(item.actionDetail ?? "")
+                    }
+                }
+
+                if !isAntigravity || appState.testModeActive {
+                    Button("拒绝") { onReject?() }
+                        .buttonStyle(HUDPillButtonStyle(primary: false))
+                }
+
+                Button(approveTitle) { if item.id == "codex" { toggleDetail() } else { onApprove?() } }
+                    .buttonStyle(HUDPillButtonStyle(primary: true))
+            }
+            .disabled(item.id == "codex" && appState.codexActionInFlight)
+        } else if item.state == .completed, onAcknowledge != nil {
+            HStack(spacing: 6) {
+                Button(isAntigravity ? "已查看" : "待命") { onAcknowledge?() }
+                    .buttonStyle(HUDPillButtonStyle(primary: false))
+                if onFocus != nil {
+                    Button("打开") { onFocus?() }
+                        .buttonStyle(HUDPillButtonStyle(primary: true))
+                }
+            }
         }
     }
 }

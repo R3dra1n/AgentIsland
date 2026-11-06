@@ -1,0 +1,126 @@
+import SwiftUI
+
+/// Look and motion of the floating HUD: a black "morphing capsule" in the style
+/// of the Dynamic Island / Live Activities. Every number lives here so the views
+/// and the tests agree on them. Nothing in this file decides *what* is shown;
+/// see `docs/hud-session-rows.md` for that.
+enum HUDStyle {
+    // MARK: Geometry (points)
+
+    static let closedSize = CGSize(width: 112, height: 28)
+    static let closedCornerRadius: CGFloat = 14
+    static let openWidth: CGFloat = 440
+    static let openCornerRadius: CGFloat = 24
+
+    static let rowHeight: CGFloat = 52
+    static let rowCornerRadius: CGFloat = 15
+    static let rowSpacing: CGFloat = 4
+    static let rowHorizontalPadding: CGFloat = 12
+    static let containerPadding: CGFloat = 9
+
+    static let dotSize: CGFloat = 10
+    static let dotSpacing: CGFloat = 10
+    static let rowContentSpacing: CGFloat = 12
+
+    /// Transparent margin kept around the capsule inside its window so the
+    /// shadow (0 10 34) is not clipped.
+    static let windowMargin = EdgeInsets(top: 4, leading: 40, bottom: 56, trailing: 40)
+
+    /// Height of the open capsule: rows x 56 + 14 (52 + 4 per row, 9 + 9 padding
+    /// minus the one gap that does not exist).
+    static func openHeight(rows: Int) -> CGFloat {
+        let n = CGFloat(max(1, rows))
+        return n * (rowHeight + rowSpacing) + 2 * containerPadding - rowSpacing
+    }
+
+    /// The closed capsule is 112 wide; with many assistants it widens just enough
+    /// to keep every dot inside it.
+    static func closedWidth(dots: Int) -> CGFloat {
+        let n = CGFloat(max(0, dots))
+        let needed = n * dotSize + max(0, n - 1) * dotSpacing + 2 * 8
+        return max(closedSize.width, needed)
+    }
+
+    static func capsuleSize(isOpen: Bool, rows: Int, dots: Int, maxOpenHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
+        if isOpen {
+            return CGSize(width: openWidth, height: min(openHeight(rows: rows), max(closedSize.height, maxOpenHeight)))
+        }
+        return CGSize(width: closedWidth(dots: dots), height: closedSize.height)
+    }
+
+    /// Size of the whole window content for a capsule of `capsule`.
+    static func windowSize(for capsule: CGSize) -> CGSize {
+        CGSize(width: capsule.width + windowMargin.leading + windowMargin.trailing,
+               height: capsule.height + windowMargin.top + windowMargin.bottom)
+    }
+
+    // MARK: Motion
+
+    static let morphDuration: Double = 0.5
+    /// cubic-bezier(.5, .1, .2, 1), 0.5 s. One shape animates width, height and
+    /// corner radius with it.
+    static let morph = Animation.timingCurve(0.5, 0.1, 0.2, 1, duration: morphDuration)
+    /// Closed dots fade out (and back in) in 0.2 s.
+    static let dotsFade = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2)
+    /// Rows fade in over 0.3 s after a 0.2 s delay, so the capsule grows first;
+    /// they fade out at once when it closes.
+    static func rowsFade(opening: Bool) -> Animation {
+        let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.3)
+        return opening ? curve.delay(0.2) : curve
+    }
+    static let pulse = Animation.easeInOut(duration: 1.4).repeatForever(autoreverses: true)
+    static let pulseOpacity: Double = 0.45
+    static let pulseScale: CGFloat = 0.8
+
+    // MARK: Colour
+
+    static func color(hex: UInt32, opacity: Double = 1) -> Color {
+        Color(.sRGB,
+              red: Double((hex >> 16) & 0xFF) / 255,
+              green: Double((hex >> 8) & 0xFF) / 255,
+              blue: Double(hex & 0xFF) / 255,
+              opacity: opacity)
+    }
+
+    static let redHex: UInt32 = 0xFF5C5C      // needs you
+    static let yellowHex: UInt32 = 0xFFC24B   // running
+    static let greenHex: UInt32 = 0x3DDC84    // done, not yet viewed
+    static let greyHex: UInt32 = 0x4A5164     // idle / viewed
+    // The four lights above are the whole palette of the design. A failed or an
+    // interrupted run still needs a light of its own, so these two are additions.
+    static let failedHex: UInt32 = 0xFF9F5A
+    static let interruptedHex: UInt32 = 0x8A93A6
+
+    static let nameColor = color(hex: 0xE8EBF1)
+    static let secondaryColor = color(hex: 0xAAB2C3)
+    static let rowFill = Color.white.opacity(0.05)
+    static let rowFillNeedsAction = color(hex: redHex, opacity: 0.16)
+    static let primaryButtonFill = Color.white
+    static let primaryButtonText = Color.black
+    static let secondaryButtonFill = Color.white.opacity(0.14)
+    static let secondaryButtonText = nameColor
+
+    static func lightHex(for state: AIState) -> UInt32 {
+        switch state {
+        case .awaitingInput: return redHex
+        case .running: return yellowHex
+        case .completed: return greenHex
+        case .failed: return failedHex
+        case .interrupted: return interruptedHex
+        case .idle, .unknown: return greyHex
+        }
+    }
+
+    static func light(for state: AIState) -> Color { color(hex: lightHex(for: state)) }
+
+    static func rowFill(for state: AIState) -> Color { state == .awaitingInput ? rowFillNeedsAction : rowFill }
+
+    // MARK: When the capsule opens by itself
+
+    /// Opens on its own only for something that needs the user (red) or is
+    /// finished and not yet viewed (green). A run in progress, a failure or a
+    /// stand-by assistant stays as dots until the user taps the capsule.
+    static func opensAutomatically(_ states: [AIState]) -> Bool {
+        states.contains { $0 == .awaitingInput || $0 == .completed }
+    }
+}
