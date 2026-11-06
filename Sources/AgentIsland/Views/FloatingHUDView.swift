@@ -429,7 +429,10 @@ public struct AISegmentView: View {
             } else if appState.hudDetailMode == .concise && item.state != .idle {
                 HStack(spacing: 4) {
                     if item.id.hasPrefix(AppState.antigravitySessionPrefix) || isClaudeSession {
+                        // Never truncate the name: the state and button beside it used to
+                        // squeeze it to "Claude ·…", which made two sessions look identical.
                         Text(item.name).font(.system(size: 10, weight: .semibold)).lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     Group {
                         if isAntigravity && item.state == .completed {
