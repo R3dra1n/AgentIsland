@@ -99,6 +99,11 @@ extension AppState {
             let id = String(row.id.dropFirst(Self.antigravitySessionPrefix.count))
             let app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.google.antigravity" }
             focusApp(for: "antigravity")
+            // Going to look at a finished conversation is what "viewed" means.
+            // Waiting for a sidebar click instead needs the Accessibility
+            // permission, which an update resets, and never fires for the
+            // programmatic press below.
+            if row.state == .completed { acknowledgeAntigravitySession(id) }
             if let pid = app?.processIdentifier {
                 Task.detached {
                     // Give the window a moment to come forward before pressing.
@@ -113,7 +118,9 @@ extension AppState {
             // has no session id; use the one that most needs attention.
             openClaude(session: Self.mostRelevantClaudeSession(claudeSessions))
         } else {
-            focusApp(for: row.icon == "antigravity" ? "antigravity" : row.id)
+            let antigravity = row.icon == "antigravity" || row.id == "antigravity"
+            focusApp(for: antigravity ? "antigravity" : row.id)
+            if antigravity, row.state == .completed { acknowledgeAntigravity() }
         }
     }
 

@@ -1,6 +1,6 @@
 # AgentIsland
 
-AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.2.3**。
+AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.2.4**。
 
 ## 状态
 
@@ -40,7 +40,7 @@ bash scripts/build_isolated_preview.sh    # 隔离预览  -> build-output/previe
 bash scripts/package.sh                   # 打包 zip、校验值与安装说明 -> dist/
 ```
 
-版本号只写在根目录的 `VERSION`。两个渠道互不共用状态：正式渠道的 bundle id 是 `com.antigravity.AgentIsland`，显示 `1.2.3`；隔离预览使用 `local.agentisland.isolatedpreview`，显示 `1.2.3-preview`，有自己的偏好与进程锁，可与正式版同时运行，窗口上标有「隔离测试版」。
+版本号只写在根目录的 `VERSION`。两个渠道互不共用状态：正式渠道的 bundle id 是 `com.antigravity.AgentIsland`，显示 `1.2.4`；隔离预览使用 `local.agentisland.isolatedpreview`，显示 `1.2.4-preview`，有自己的偏好与进程锁，可与正式版同时运行，窗口上标有「隔离测试版」。
 
 ## Hook 与隐私
 
