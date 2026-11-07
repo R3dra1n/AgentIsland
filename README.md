@@ -2,13 +2,13 @@
 
 AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.3.2**。
 
+<p align="center"><img src="docs/images/hud-story.gif" alt="一边看视频，Codex 完成了：胶囊从屏幕上方弹出，点「打开」直接切到 Codex 窗口" width="880"></p>
+
+*场景：你在看视频，Codex 做完了——胶囊自己弹出来，点「打开」就切到 Codex 的窗口，胶囊随即收回。示意画面：桌面、视频和 Codex 窗口是合成的，胶囊与菜单栏上的状态是应用本身的真实渲染；助手名称、状态文字和对话内容都是虚构的演示数据。*
+
 ![AgentIsland 概览：展开的行列表，以及收起时的图标、圆点和直列形态](docs/images/overview.png)
 
-<p align="center"><img src="docs/images/hud-demo.gif" alt="胶囊在收起与展开之间变形的演示" width="640"></p>
-
-*图片中的助手名称、状态文字和对话内容都是演示用的虚构数据。*
-
-**In English:** AgentIsland is a macOS (14+) floating HUD, styled like the iPhone Dynamic Island, that shows what your AI coding assistants (Codex, Antigravity, Claude Code; experimental: Cursor, Windsurf, Trae) are doing. It stays a small capsule of status lights, and opens by itself when an assistant needs you or has finished. Interface text is in Chinese. Builds are ad-hoc signed and not notarized, and there is no public release yet; see the status section below.
+**In English:** AgentIsland is a macOS (14+) floating HUD, styled like the iPhone Dynamic Island, that shows what your AI coding assistants (Codex, Antigravity, Claude Code; experimental: Cursor, Windsurf, Trae) are doing. It stays a small capsule of status lights, and opens by itself when an assistant needs you or has finished. Interface text is in Chinese. Builds are ad-hoc signed and not notarized, and the only builds are pre-releases for Apple Silicon (see Releases); see the status section below.
 
 ## 状态
 
@@ -34,6 +34,16 @@ AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏
 - 开合用弹簧动画，窗口中心保持不动；系统开启「减弱动态效果」时直接切换。
 - **边缘光效**：胶囊外沿一圈细光边，红（呼吸）、黄、绿，全部待命时是淡白，可在设置中关闭。
 - **直列模式**：收起的胶囊变成竖条，圆点或图标从上到下排。
+
+<p align="center"><img src="docs/images/hud-demo.gif" alt="胶囊在收起与展开之间变形的演示" width="640"></p>
+
+## 状态栏
+
+菜单栏里常驻一个小条，每个助手一格：助手图标、状态圆点和状态文字（待命／执行中／已完成／需操作／失败）。悬浮窗收起或隐藏时，扫一眼菜单栏就知道谁在忙、谁做完了、谁在等你。Antigravity 的多个会话在这里合成一格。
+
+![状态栏：全部待命、执行中、已完成与需操作、刚完成，分别在深色与浅色菜单栏上的样子](docs/images/menubar.png)
+
+图标、状态圆点和状态文字可以分别在设置的「状态栏」里关闭；三项都关掉时，菜单栏退回只显示一个应用图标。点这个小条会打开下面的设置面板。
 
 ## 设置面板
 

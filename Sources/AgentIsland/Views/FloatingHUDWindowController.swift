@@ -116,6 +116,25 @@ public final class FloatingHUDWindowController: NSObject {
             Self.applyDemoScene(scene, to: state)
             return
         }
+        // AGENTISLAND_DEMO_SEQUENCE="2:3.0,6:4.2,7:3.0": scenes with their own
+        // dwell time, looping, for a storyboarded recording.
+        if let sequence = env["AGENTISLAND_DEMO_SEQUENCE"] {
+            let steps = sequence.split(separator: ",").compactMap { part -> (Int, Double)? in
+                let bits = part.split(separator: ":")
+                guard bits.count == 2, let scene = Int(bits[0]), let seconds = Double(bits[1]) else { return nil }
+                return (scene, seconds)
+            }
+            guard !steps.isEmpty else { return }
+            var index = 0
+            func next() {
+                let (scene, seconds) = steps[index % steps.count]
+                index += 1
+                Self.applyDemoScene(scene, to: state)
+                DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { next() }
+            }
+            next()
+            return
+        }
         if env["AGENTISLAND_DEMO"] == "scenes" {
             var scene = 0
             demoTimer = Timer.scheduledTimer(withTimeInterval: 3.2, repeats: true) { _ in
@@ -145,6 +164,8 @@ public final class FloatingHUDWindowController: NSObject {
         case 1: (codex, agy, claude) = (.idle, .idle, .idle)
         case 2: (codex, agy, claude) = (.running, .idle, .running)
         case 3: (codex, agy, claude) = (.completed, .running, .awaitingInput)
+        case 6: (codex, agy, claude) = (.completed, .idle, .running)
+        case 7: (codex, agy, claude) = (.idle, .idle, .running)
         default: (codex, agy, claude) = (.idle, .completed, .idle)
         }
         state.codexState = codex; state.antigravityState = agy; state.claudeState = claude
@@ -153,6 +174,24 @@ public final class FloatingHUDWindowController: NSObject {
         state.antigravityDescription = agy == .completed ? "方案已生成" : (agy == .running ? "正在整理需求" : "待命中")
         state.claudeDescription = claude == .awaitingInput ? "要运行 swift build，是否允许？" : (claude == .running ? "正在阅读代码" : "待命中")
         state.aggregatedState = [codex, agy, claude].max() ?? .idle
+        if let dir = ProcessInfo.processInfo.environment["AGENTISLAND_DEMO_MENUBAR_DIR"] {
+            for dark in [true, false] { exportMenuBarImage(state, scene: scene, dark: dark, dir: dir) }
+        }
+    }
+
+    /// The menu bar item as an image (4x, transparent), for documentation.
+    private static func exportMenuBarImage(_ state: AppState, scene: Int, dark: Bool, dir: String) {
+        let image = MenuBarLabelView.generateMenuBarImage(appState: state, isDark: dark)
+        let scale: CGFloat = 4
+        let w = Int(image.size.width * scale), h = Int(image.size.height * scale)
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8, samplesPerPixel: 4,
+                                         hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: rep) else { return }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)))
+        NSGraphicsContext.restoreGraphicsState()
+        try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/mb_\(scene)_\(dark ? "dark" : "light").png"))
     }
     #else
     private func startPreviewDemoIfRequested(_ state: AppState) {}
