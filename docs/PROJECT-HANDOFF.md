@@ -1,6 +1,6 @@
 # AgentIsland 项目交接与路线图
 
-本文面向接手的开发者和 AI，记录截至 2026-11-07（版本 1.3.1）的项目方向、验收结果与待办。它是开发快照，不代表已正式发布；接手时请重新核对实际代码、运行版本与仓库状态，不要把旧文档中的推断当作当前事实。
+本文面向接手的开发者和 AI，记录截至 2026-11-07（版本 1.3.2）的项目方向、验收结果与待办。它是开发快照，不代表已正式发布；接手时请重新核对实际代码、运行版本与仓库状态，不要把旧文档中的推断当作当前事实。
 
 ## 产品目标与原始设想的区别
 
@@ -16,8 +16,8 @@
 | | 正式（release） | 隔离预览（preview） |
 | --- | --- | --- |
 | 构建 | `bash scripts/build_app.sh` | `bash scripts/build_isolated_preview.sh` |
-| bundle id | `com.antigravity.AgentIsland` | `local.agentisland.isolatedpreview` |
-| 显示版本 | `1.3.1` | `1.3.1-preview` |
+| bundle id | `io.github.r3dra1n.AgentIsland` | `local.agentisland.isolatedpreview` |
+| 显示版本 | `1.3.2` | `1.3.2-preview` |
 | 输出 | `build-output/release/` | `build-output/preview/` |
 | 偏好、进程锁 | 正常位置 | 独立的偏好域；锁在临时目录；窗口标有「隔离测试版」 |
 | 用途 | 日常使用 | 测试，可与正式版同时运行 |

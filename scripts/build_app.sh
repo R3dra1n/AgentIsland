@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds AgentIsland.app for one of two channels that never share state:
 #
-#   release  the version that is actually run          com.antigravity.AgentIsland
+#   release  the version that is actually run          io.github.r3dra1n.AgentIsland
 #   preview  an isolated test build, safe to run       local.agentisland.isolatedpreview
 #            beside the real app (own bundle id,
 #            preferences and process lock)
@@ -18,7 +18,7 @@ VERSION="$(tr -d '[:space:]' < "$DIR/VERSION")"
 CHANNEL="${AGENTISLAND_CHANNEL:-release}"
 case "$CHANNEL" in
     release)
-        BUNDLE_ID="com.antigravity.AgentIsland"
+        BUNDLE_ID="io.github.r3dra1n.AgentIsland"
         DISPLAY_NAME="AgentIsland"
         SHORT_VERSION="$VERSION"
         ;;

@@ -4,7 +4,7 @@ import Combine
 import os.log
 import AppKit
 
-private let logger = Logger(subsystem: "com.antigravity.AgentIsland", category: "AppState")
+private let logger = Logger(subsystem: "io.github.r3dra1n.AgentIsland", category: "AppState")
 
 
 @MainActor
@@ -332,6 +332,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     private var previousState: AIState = .idle
 
     public init() {
+        PreferenceMigration.runForCurrentApp()
         // Load settings
         self.antigravityAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "antigravityAcknowledgedSessions") as? [String: Date] ?? [:]
         self.antigravityPrevalidationEnabled = UserDefaults.standard.bool(forKey: "antigravityPrevalidationEnabled") && UserDefaults.standard.bool(forKey: "antigravityLocalReplyConsent")

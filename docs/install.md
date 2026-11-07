@@ -4,11 +4,11 @@
 
 ## 获取与校验
 
-打包后，应用 ZIP、同名 `.sha256` 校验文件和 `INSTALL.md` 是三个并列文件，ZIP 中只有 App。文件名带版本号和架构，例如 `AgentIsland-1.3.1-macOS-arm64.zip`。把三个文件下载到同一目录，以 Apple Silicon 包放在「下载」目录为例：
+打包后，应用 ZIP、同名 `.sha256` 校验文件和 `INSTALL.md` 是三个并列文件，ZIP 中只有 App。文件名带版本号和架构，例如 `AgentIsland-1.3.2-macOS-arm64.zip`。把三个文件下载到同一目录，以 Apple Silicon 包放在「下载」目录为例：
 
 ```sh
 cd ~/Downloads
-shasum -a 256 -c AgentIsland-1.3.1-macOS-arm64.zip.sha256
+shasum -a 256 -c AgentIsland-1.3.2-macOS-arm64.zip.sha256
 ```
 
 显示 `OK` 表示 ZIP 与该校验文件一致；校验值本身仍需从可信渠道获取。
@@ -24,7 +24,7 @@ shasum -a 256 -c AgentIsland-1.3.1-macOS-arm64.zip.sha256
 7. 「Antigravity 提前验证问题」默认关闭。单独开启后，会在问题出现时查询本机会话以减少面板等待，并能在服务器确认问题已不再等待时清掉已结束的提醒；它不会自动提交回复，可随时关闭。
 8. 新装的版本使用独立的偏好域，Claude 默认关闭，需要在设置里打开；Antigravity 的后台回复授权需要重新同意。
 
-两个渠道可同时运行：正式版的 bundle id 是 `com.antigravity.AgentIsland`，隔离预览是 `local.agentisland.isolatedpreview`，窗口上标有「隔离测试版」，偏好与进程锁互相独立。
+两个渠道可同时运行：正式版的 bundle id 是 `io.github.r3dra1n.AgentIsland`（1.3.1 及更早是 `com.antigravity.AgentIsland`，首次启动会把普通设置迁移过来，授权类设置不迁移，需要重新同意），隔离预览是 `local.agentisland.isolatedpreview`，窗口上标有「隔离测试版」，偏好与进程锁互相独立。
 
 ## 可选 Hook
 
@@ -39,7 +39,7 @@ Codex 使用版本相关的非公开 IPC，断线或协议变化时需回原应�
 1. **务必先做这一步。** 若曾配置可选 Hook，先在应用设置中选择对应的「移除 Hook」并选择之前配置的 `hooks.json`；重复此步骤处理每个曾配置的助手。确认其他 Hook 仍在，保留备份直到核对完成。
 2. 退出 AgentIsland，再将安装的 `AgentIsland.app` 移到废纸篓。若曾授予辅助功能权限，可在 macOS「隐私与安全性 → 辅助功能」中移除该应用的授权记录。
 3. 若不再需要 AgentIsland 的本机事件记录、锁文件和版本化 Hook 工具，可在 Finder「前往文件夹」打开 `~/Library/Application Support/AgentIsland`，检查后删除该目录。确认其他配置已不再引用其中的工具；配置文件旁的 `*.agentisland-backup-*` 需自行决定是否保留。所选 Hook 配置文件所在目录还可能留下隐藏的 `.agentisland-lock-<哈希>` 文件；只有确认所有 AgentIsland Hook 安装或移除操作均已结束后，才可自行选择删除，进行中的操作不要删除锁文件。
-4. 如需清除全部 AgentIsland 界面偏好和后台回复授权，确认应用已退出后可在终端运行 `defaults delete com.antigravity.AgentIsland`；若该偏好域不存在，命令可能提示未找到。此操作会删除该域的全部设置，请先确认需要清除。隔离预览使用另一个偏好域 `local.agentisland.isolatedpreview`，要清除它需单独对该域执行同样的命令。
+4. 如需清除全部 AgentIsland 界面偏好和后台回复授权，确认应用已退出后可在终端运行 `defaults delete io.github.r3dra1n.AgentIsland`（旧版本用 `com.antigravity.AgentIsland`）；若该偏好域不存在，命令可能提示未找到。此操作会删除该域的全部设置，请先确认需要清除。隔离预览使用另一个偏好域 `local.agentisland.isolatedpreview`，要清除它需单独对该域执行同样的命令。
 
 不要删除 Codex、Antigravity 或其他助手自身的对话、配置和数据目录。以上删除步骤不可自动恢复，请先保留需要的备份。
 
