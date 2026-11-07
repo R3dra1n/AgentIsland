@@ -56,19 +56,25 @@ enum HUDStyle {
 
     // MARK: Motion
 
-    static let morphDuration: Double = 0.5
-    /// cubic-bezier(.5, .1, .2, 1), 0.5 s. One shape animates width, height and
-    /// corner radius with it.
-    static let morph = Animation.timingCurve(0.5, 0.1, 0.2, 1, duration: morphDuration)
+    /// Time the window waits before it shrinks, so the spring has settled.
+    static let morphDuration: Double = 0.55
+    /// A critically-damped-ish spring, as the system Dynamic Island uses, not a
+    /// fixed-time curve: it can be interrupted by a second tap or a new row and
+    /// carries its velocity over instead of restarting, which is what made the
+    /// old curve feel stiff. One shape animates width, height and corner radius.
+    static let morph = Animation.spring(response: 0.42, dampingFraction: 0.84)
+    /// How long the window gets to grow before the capsule starts to, so the
+    /// first frames of the morph are not drawn while the window is resizing.
+    static let windowGrowLead: Double = 0.04
     /// Closed dots fade out (and back in) in 0.2 s.
     static let dotsFade = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.2)
     /// Rows fade in over 0.3 s after a 0.2 s delay, so the capsule grows first;
     /// they fade out at once when it closes.
     static func rowsFade(opening: Bool) -> Animation {
-        // Closing is quick (0.12 s) so no half-faded row is left behind, clipped,
-        // while the capsule is still narrowing.
-        let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: opening ? 0.3 : 0.12)
-        return opening ? curve.delay(0.2) : curve
+        // Closing is quick so no half-faded row is left behind, clipped, while
+        // the capsule is still narrowing; opening waits for the capsule to lead.
+        let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: opening ? 0.28 : 0.1)
+        return opening ? curve.delay(0.12) : curve
     }
     static let pulse = Animation.easeInOut(duration: 1.4).repeatForever(autoreverses: true)
     static let pulseOpacity: Double = 0.45

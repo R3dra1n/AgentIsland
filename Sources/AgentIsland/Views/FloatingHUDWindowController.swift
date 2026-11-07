@@ -147,7 +147,9 @@ public final class FloatingHUDWindowController: NSObject {
         let targetX: CGFloat
         let targetY: CGFloat
         if hasCustomUserPosition {
-            targetX = min(max(panel.frame.origin.x, screen.visibleFrame.minX), screen.visibleFrame.maxX - windowWidth)
+            // Keep the capsule's centre (not its left edge) fixed, so it does not
+            // slide sideways when it widens or narrows.
+            targetX = min(max(panel.frame.midX - windowWidth / 2, screen.visibleFrame.minX), screen.visibleFrame.maxX - windowWidth)
             targetY = min(max(panel.frame.origin.y + (panel.frame.height - windowHeight), screen.visibleFrame.minY), screen.visibleFrame.maxY - windowHeight)
         } else {
             targetX = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2.0

@@ -9,6 +9,9 @@ public struct FloatingHUDView: View {
     /// Tapped open by the user while nothing needs them. Closes again on a second
     /// tap, or by itself once something does need them and then is dealt with.
     @State private var manuallyOpen = false
+    /// What is drawn. It follows the wanted state one beat later when opening, so
+    /// the window has already grown and the first frames are not torn.
+    @State private var shownOpen = false
     /// Attention the user has already collapsed the capsule on. The capsule
     /// stays shut for these and opens again only for something new.
     @State private var dismissedAttention: Set<String> = []
@@ -89,8 +92,10 @@ public struct FloatingHUDView: View {
         let lights = dots(for: items)
         let attention = HUDStyle.attentionKeys(items)
         let opensByItself = !attention.subtracting(dismissedAttention).isEmpty
-        let isOpen = opensByItself || manuallyOpen
+        let targetOpen = opensByItself || manuallyOpen
+        let isOpen = shownOpen
         let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
+        let targetCapsule = HUDStyle.capsuleSize(isOpen: targetOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
         let openHeight = HUDStyle.openHeight(rows: items.count)
         let rowsNeedScroll = openHeight > capsule.height && isOpen
         let shape = RoundedRectangle(cornerRadius: isOpen ? HUDStyle.openCornerRadius : HUDStyle.closedCornerRadius, style: .continuous)
@@ -163,8 +168,16 @@ public struct FloatingHUDView: View {
             // Forget what is no longer there, so the next one is news again.
             dismissedAttention.formIntersection(now)
         }
-        .onChange(of: HUDStyle.windowSize(for: capsule), initial: true) { _, size in
+        .onChange(of: HUDStyle.windowSize(for: targetCapsule), initial: true) { _, size in
             onContentSizeChange(size)
+        }
+        .task(id: targetOpen) {
+            if reduceMotion || !targetOpen {
+                shownOpen = targetOpen
+            } else {
+                try? await Task.sleep(for: .seconds(HUDStyle.windowGrowLead))
+                if !Task.isCancelled { shownOpen = true }
+            }
         }
     }
 
