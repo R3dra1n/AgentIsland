@@ -33,4 +33,16 @@ final class PreferenceMigrationTests: XCTestCase {
         XCTAssertEqual(PreferenceMigration.run(from: legacy, into: target, legacyName: legacyName), [])
         XCTAssertNil(target.object(forKey: "hudOpacity"))
     }
+
+    func testViewedMarksArePersistedAndPrunedToTheNewest() {
+        let key = "test.marks.\(UUID().uuidString)"
+        defer { UserDefaults.standard.removeObject(forKey: key) }
+        var marks: [String: Date] = [:]
+        for i in 0..<10 { marks["s\(i)"] = Date(timeIntervalSince1970: Double(i)) }
+        AppState.persistMarks(marks, key: key, limit: 4)
+        let saved = UserDefaults.standard.dictionary(forKey: key) as? [String: Date]
+        XCTAssertEqual(Set(saved?.keys.map { $0 } ?? []), ["s6", "s7", "s8", "s9"])
+        AppState.persistMarks(["a": Date(timeIntervalSince1970: 1)], key: key)
+        XCTAssertEqual((UserDefaults.standard.dictionary(forKey: key) as? [String: Date])?["a"], Date(timeIntervalSince1970: 1))
+    }
 }

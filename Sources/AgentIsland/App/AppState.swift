@@ -115,7 +115,9 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// Every Claude Code conversation that currently has something to show. The
     /// HUD gets one row per conversation once there is more than one.
     @Published var claudeSessions: [ClaudeSessionSnapshot] = []
-    @Published var claudeAcknowledgedSessions: [String: Date] = [:]
+    @Published var claudeAcknowledgedSessions: [String: Date] = [:] {
+        didSet { Self.persistMarks(claudeAcknowledgedSessions, key: "claudeAcknowledgedSessions") }
+    }
     private var antigravityViewedMonitor: AntigravityViewedMonitor?
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
     @Published var antigravityPrevalidationEnabled = false
@@ -334,6 +336,8 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     public init() {
         PreferenceMigration.runForCurrentApp()
         // Load settings
+        self.claudeAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "claudeAcknowledgedSessions") as? [String: Date] ?? [:]
+        self.lastAcknowledgedDates = UserDefaults.standard.dictionary(forKey: "lastAcknowledgedDates") as? [String: Date] ?? [:]
         self.antigravityAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "antigravityAcknowledgedSessions") as? [String: Date] ?? [:]
         self.antigravityPrevalidationEnabled = UserDefaults.standard.bool(forKey: "antigravityPrevalidationEnabled") && UserDefaults.standard.bool(forKey: "antigravityLocalReplyConsent")
         if UserDefaults.standard.object(forKey: "isHUDEnabled") != nil {
@@ -436,7 +440,21 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         }
     }
 
-    var lastAcknowledgedDates: [String: Date] = [:]
+    /// When the user last dealt with each assistant as a whole. Kept across
+    /// restarts: kept only in memory, a restart made everything the user had
+    /// already viewed (a Codex task, say) show up as newly finished.
+    var lastAcknowledgedDates: [String: Date] = [:] {
+        didSet { Self.persistMarks(lastAcknowledgedDates, key: "lastAcknowledgedDates") }
+    }
+
+    /// Saves a "viewed" mark table, dropping the oldest marks so it cannot grow
+    /// without bound (one entry per conversation ever seen).
+    nonisolated static func persistMarks(_ marks: [String: Date], key: String, limit: Int = 300) {
+        let kept = marks.count > limit
+            ? Dictionary(uniqueKeysWithValues: marks.sorted { $0.value > $1.value }.prefix(limit).map { ($0.key, $0.value) })
+            : marks
+        UserDefaults.standard.set(kept, forKey: key)
+    }
 
     private func isAppActive(name: String, bundleId: String, for observerId: String) -> Bool {
         switch observerId {
