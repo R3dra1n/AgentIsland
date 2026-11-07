@@ -53,7 +53,7 @@ final class AntigravitySessionPresentationTests: XCTestCase {
         XCTAssertEqual(viewed.map(\.state), [.completed])
         XCTAssertEqual(viewed.map(\.id), [AppState.antigravitySessionPrefix + second.id])
         XCTAssertEqual(viewed.first?.name, "antigravity")
-        let newCompletion = session(first.id, .completed, lastActiveDate: now.addingTimeInterval(1))
+        let newCompletion = session(first.id, .completed, lastActiveDate: now.addingTimeInterval(AppState.viewedGrace + 60))
         let waiting = session(second.id, .awaitingInput, lastActiveDate: now)
         let changed = AppState.expandAntigravitySessions([provider("antigravity")], sessions: [newCompletion, waiting],
             feedback: [:], labels: labels, acknowledged: [first.id: now, second.id: now])

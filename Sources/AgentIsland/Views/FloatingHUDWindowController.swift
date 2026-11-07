@@ -11,6 +11,10 @@ public final class FloatingHUDWindowController: NSObject {
     private var appState: AppState?
     private var isInitialized = false
     private var measuredContentSize: CGSize = .zero
+    /// While the capsule shrinks the window keeps its larger size until the morph
+    /// has finished, so the animation is not cut off by the window.
+    private var heldSize: CGSize?
+    private var pendingShrink: DispatchWorkItem?
 
     public override init() {
         super.init()
@@ -39,7 +43,7 @@ public final class FloatingHUDWindowController: NSObject {
             guard let self, size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
                   abs(self.measuredContentSize.width - size.width) >= 1 || abs(self.measuredContentSize.height - size.height) >= 1 else { return }
             self.measuredContentSize = size
-            self.updateWindowPosition(animated: false)
+            self.applyContentSize()
         }
         let hostingView = DraggableHostingView(rootView: hudView)
         hostingView.wantsLayer = true
@@ -92,38 +96,60 @@ public final class FloatingHUDWindowController: NSObject {
             .store(in: &cancellables)
         
         syncVisibility()
+        startPreviewDemoIfRequested(state)
     }
+
+    #if AGENTISLAND_ISOLATED_PREVIEW
+    private var demoTimer: Timer?
+    /// Preview builds only, and only with AGENTISLAND_DEMO=1: walks the HUD
+    /// through running, done, needs-you and standby so the morph can be watched
+    /// (and recorded) without real assistants. Never compiled into a release.
+    private func startPreviewDemoIfRequested(_ state: AppState) {
+        guard ProcessInfo.processInfo.environment["AGENTISLAND_DEMO"] == "1" else { return }
+        let steps: [AIState] = [.running, .completed, .awaitingInput, .running, .idle]
+        var index = 0
+        demoTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                state.triggerMultiTest(state: steps[index % steps.count])
+                index += 1
+            }
+        }
+        demoTimer?.fire()
+    }
+    #else
+    private func startPreviewDemoIfRequested(_ state: AppState) {}
+    #endif
 
     public var hasCustomUserPosition = false
 
     public func updateWindowPosition(animated: Bool = true) {
         // If user is actively dragging or holding the mouse, NEVER interrupt with automatic frame updates!
         if NSEvent.pressedMouseButtons != 0 { return }
-        guard let panel = panel, let screen = panel.screen ?? NSScreen.main, let state = appState else { return }
+        guard let panel = panel, let screen = panel.screen ?? NSScreen.main else { return }
 
         let screenFrame = screen.frame
-
-        let isVertical = state.hudLayoutMode == .vertical
-        let items = state.displayedObservers
-        let count = max(1, items.count)
-        let antigravityRows = items.filter { $0.icon == "antigravity" }.count
-        let groupCount = max(1, count - max(0, antigravityRows - 1))
-        // Session labels, status badges and the action button can exceed the
-        // old 360-point estimate. Keep every row readable when it fits on the
-        // screen; the HUD's scroll view handles narrower displays.
-        let wantedWidth: CGFloat = max(measuredContentSize.width, isVertical ? 520 : CGFloat(groupCount * 480 + 80))
-        let wantedHeight: CGFloat = max(measuredContentSize.height, isVertical ? CGFloat(count * 50 + 120) : CGFloat(110 + max(0, antigravityRows - 1) * 50))
-        let windowWidth = min(wantedWidth, max(100, screen.visibleFrame.width - 20))
+        // The view reports the size of the capsule's *target* state plus its
+        // shadow margin; the capsule itself animates inside the window. Until the
+        // first report, a closed capsule's worth of window.
+        var reported = measuredContentSize == .zero
+            ? HUDStyle.windowSize(for: HUDStyle.closedSize)
+            : measuredContentSize
+        if let held = heldSize {
+            reported = CGSize(width: max(reported.width, held.width), height: max(reported.height, held.height))
+        }
+        let windowWidth = min(reported.width, max(100, screen.visibleFrame.width - 20))
         #if AGENTISLAND_ISOLATED_PREVIEW
-        let windowHeight = min(wantedHeight, max(100, screen.visibleFrame.height - 130))
+        let windowHeight = min(reported.height, max(100, screen.visibleFrame.height - 130))
         #else
-        let windowHeight = min(wantedHeight, max(100, screen.visibleFrame.height - 20))
+        let windowHeight = min(reported.height, max(100, screen.visibleFrame.height - 20))
         #endif
 
         let targetX: CGFloat
         let targetY: CGFloat
         if hasCustomUserPosition {
-            targetX = min(max(panel.frame.origin.x, screen.visibleFrame.minX), screen.visibleFrame.maxX - windowWidth)
+            // Keep the capsule's centre (not its left edge) fixed, so it does not
+            // slide sideways when it widens or narrows.
+            targetX = min(max(panel.frame.midX - windowWidth / 2, screen.visibleFrame.minX), screen.visibleFrame.maxX - windowWidth)
             targetY = min(max(panel.frame.origin.y + (panel.frame.height - windowHeight), screen.visibleFrame.minY), screen.visibleFrame.maxY - windowHeight)
         } else {
             targetX = screenFrame.origin.x + (screenFrame.width - windowWidth) / 2.0
@@ -145,15 +171,34 @@ public final class FloatingHUDWindowController: NSObject {
             return
         }
 
-        if animated && panel.isVisible {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.25
-                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                panel.animator().setFrame(targetFrame, display: true)
+        // The capsule morphs inside the window (SwiftUI), so the window itself
+        // only ever jumps to the size that fits the capsule's target state.
+        panel.setFrame(targetFrame, display: true)
+    }
+
+    /// Called when the view reports a new target size. Growing takes effect at
+    /// once, so the capsule has room to grow into; shrinking waits for the morph.
+    private func applyContentSize() {
+        pendingShrink?.cancel()
+        pendingShrink = nil
+        heldSize = nil
+        guard let panel = panel else { return }
+        let current = panel.frame.size
+        let shrinking = measuredContentSize.width < current.width - 1 || measuredContentSize.height < current.height - 1
+        if shrinking, panel.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            heldSize = current
+            let work = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.heldSize = nil
+                    self.pendingShrink = nil
+                    self.updateWindowPosition(animated: false)
+                }
             }
-        } else {
-            panel.setFrame(targetFrame, display: true)
+            pendingShrink = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + HUDStyle.morphDuration + 0.1, execute: work)
         }
+        updateWindowPosition(animated: false)
     }
 
     public func syncVisibility() {
@@ -245,4 +290,3 @@ public final class DraggableHostingView<Content: View>: NSHostingView<Content> {
         isDragging = false
     }
 }
-

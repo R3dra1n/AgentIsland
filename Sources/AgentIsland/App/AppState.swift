@@ -36,6 +36,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     }
 
     // Status Bar Settings: Three independent toggles
+    /// Closed capsule shows each assistant's icon (tinted by its state) instead of a dot.
+    @Published public var hudShowsIcons: Bool = false {
+        didSet { UserDefaults.standard.set(hudShowsIcons, forKey: "hudShowsIcons") }
+    }
     @Published public var hudOpacity: Double = 1.0 {
         didSet {
             UserDefaults.standard.set(hudOpacity, forKey: "hudOpacity")
@@ -218,8 +222,20 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         return SessionRows(rows: shown + [chip], hidden: hidden)
     }
 
+    /// Opening a finished conversation makes its host app rewrite the file the
+    /// "last active" time comes from, a few seconds after the "viewed" mark was
+    /// taken. Without a margin that rewrite made a conversation the user had
+    /// just looked at count as new again, and it came back as "done" the next
+    /// time anything else refreshed the state.
+    nonisolated static let viewedGrace: TimeInterval = 15
+
+    nonisolated static func viewMarkCovers(acknowledgedAt: Date?, finishedAt: Date?) -> Bool {
+        guard let acknowledgedAt, let finishedAt else { return false }
+        return acknowledgedAt.addingTimeInterval(viewedGrace) >= finishedAt
+    }
+
     private static func isViewed(completedAt: Date?, lastActive: Date?, state: AIState, acknowledged: [String: Date], id: String) -> Bool {
-        state == .completed && ((completedAt ?? lastActive).map { (acknowledged[id] ?? .distantPast) >= $0 } ?? false)
+        state == .completed && viewMarkCovers(acknowledgedAt: acknowledged[id], finishedAt: completedAt ?? lastActive)
     }
 
     static func claudeArrangement(_ provider: AIObserverItem, sessions: [ClaudeSessionSnapshot], labels: [String: Int],
@@ -351,6 +367,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         if UserDefaults.standard.object(forKey: "soundAlertEnabled") != nil {
             self.soundAlertEnabled = UserDefaults.standard.bool(forKey: "soundAlertEnabled")
         }
+        self.hudShowsIcons = UserDefaults.standard.bool(forKey: "hudShowsIcons")
         if UserDefaults.standard.object(forKey: "hudOpacity") != nil {
             self.hudOpacity = UserDefaults.standard.double(forKey: "hudOpacity")
         }

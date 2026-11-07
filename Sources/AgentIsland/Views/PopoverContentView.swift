@@ -141,190 +141,111 @@ public struct PopoverContentView: View {
         }
     }
 
+    /// Settings in the grouped-form style of System Settings: a small caption
+    /// above each rounded group, rows inside it separated by hairlines.
     @ViewBuilder
     private var preferencesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("主题外观")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Picker("", selection: $appState.appTheme) {
-                    ForEach(AppTheme.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+        VStack(alignment: .leading, spacing: 14) {
+            settingsGroup("外观") {
+                pickerRow("主题外观", selection: $appState.appTheme, options: AppTheme.allCases) { $0.rawValue }
+            }
+
+            settingsGroup("灵动岛") {
+                pickerRow("布局", selection: $appState.hudLayoutMode, options: HUDLayoutMode.allCases) { $0.rawValue }
+                pickerRow("详情", selection: $appState.hudDetailMode, options: HUDDetailMode.allCases) { $0.rawValue }
+                pickerRow("展示模式", selection: $appState.hudDisplayMode, options: HUDDisplayMode.allCases) { $0.title }
+                settingsRow("透明度") {
+                    Slider(value: $appState.hudOpacity, in: 0.0...1.0).frame(width: 110)
+                }
+                toggleRow("收起时显示助手图标", isOn: $appState.hudShowsIcons)
+                toggleRow("边缘光效", isOn: $appState.showHUDGlow)
+            }
+
+            settingsGroup("状态栏") {
+                toggleRow("显示图标", isOn: $appState.showMenuBarIcon)
+                toggleRow("显示状态圆点", isOn: $appState.showMenuBarDot)
+                toggleRow("显示详情文字", isOn: $appState.showMenuBarText)
+            }
+
+            settingsGroup("通知与集成") {
+                toggleRow("系统提示音", isOn: $appState.soundAlertEnabled)
+                settingsRow("可选 Hook") {
+                    Menu("配置") {
+                        Button("配置 Codex Hook…") { NativeHookSetup.begin(source: "codex") }
+                        Button("配置 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity") }
+                        Button("配置 Claude Code Hook…") { NativeHookSetup.begin(source: "claude") }
+                        Divider()
+                        Button("移除 Codex Hook…") { NativeHookSetup.begin(source: "codex", removing: true) }
+                        Button("移除 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity", removing: true) }
+                        Button("移除 Claude Code Hook…") { NativeHookSetup.begin(source: "claude", removing: true) }
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
                 }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .labelsHidden()
-            }
-            
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("灵动岛布局")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Picker("", selection: $appState.hudLayoutMode) {
-                    ForEach(HUDLayoutMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .labelsHidden()
-            }
-            
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("灵动岛详情")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Picker("", selection: $appState.hudDetailMode) {
-                    ForEach(HUDDetailMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("灵动岛展示模式")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Picker("", selection: $appState.hudDisplayMode) {
-                    ForEach(HUDDisplayMode.allCases, id: \.self) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("灵动岛透明度")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Slider(value: $appState.hudOpacity, in: 0.0...1.0)
-                    .frame(width: 100)
-            }
-
-            HStack {
-                Text("灵动岛边缘光效")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: $appState.showHUDGlow)
-                    .toggleStyle(.appleNative)
-                    .labelsHidden()
-            }
-            
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("状态栏显示图标")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: $appState.showMenuBarIcon)
-                    .toggleStyle(.appleNative)
-                    .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("状态栏显示状态圆点")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: $appState.showMenuBarDot)
-                    .toggleStyle(.appleNative)
-                    .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("状态栏显示详情文字")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: $appState.showMenuBarText)
-                    .toggleStyle(.appleNative)
-                    .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("系统提示音")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: $appState.soundAlertEnabled)
-                    .toggleStyle(.appleNative)
-                    .labelsHidden()
-            }
-
-            Divider().opacity(0.6)
-
-            HStack {
-                Text("可选 Hook")
-                    .font(.system(size: 12, weight: .medium))
-                Spacer()
-                Menu("配置") {
-                    Button("配置 Codex Hook…") { NativeHookSetup.begin(source: "codex") }
-                    Button("配置 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity") }
-                    Button("配置 Claude Code Hook…") { NativeHookSetup.begin(source: "claude") }
-                    Divider()
-                    Button("移除 Codex Hook…") { NativeHookSetup.begin(source: "codex", removing: true) }
-                    Button("移除 Antigravity Hook…") { NativeHookSetup.begin(source: "antigravity", removing: true) }
-                    Button("移除 Claude Code Hook…") { NativeHookSetup.begin(source: "claude", removing: true) }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-
-            HStack {
-                Text("Antigravity 提前验证问题")
-                    .font(.system(size: 12, weight: .medium))
-                Spacer()
-                Toggle("", isOn: Binding(
+                toggleRow("Antigravity 提前验证问题", isOn: Binding(
                     get: { appState.antigravityPrevalidationEnabled },
                     set: { AntigravityActionController.setPrevalidation($0, state: appState) }
                 ))
-                .toggleStyle(.appleNative)
-                .labelsHidden()
                 .help("开启后会在打开面板前查询等待的问题，不会自动回复。")
+                settingsRow("Antigravity 后台回复授权") {
+                    Button("撤销") { AntigravityActionController.revokeConsent(state: appState) }
+                        .controlSize(.small)
+                }
             }
-
-            Button("撤销 Antigravity 后台回复授权") { AntigravityActionController.revokeConsent(state: appState) }
-                .font(.system(size: 11))
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color(NSColor.controlBackgroundColor).opacity(0.6))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color(NSColor.separatorColor).opacity(0.25), lineWidth: 0.8)
-        )
+    }
+
+    private func settingsGroup<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.secondary)
+                .padding(.leading, 10)
+            // `_VariadicView` is not public, so rows draw their own hairline
+            // above themselves (hidden for the first one by the clip below).
+            VStack(spacing: 0) { content() }
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(NSColor.controlBackgroundColor).opacity(0.6))
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(Color(NSColor.separatorColor).opacity(0.35), lineWidth: 0.5)
+                )
+        }
+    }
+
+    private func settingsRow<Control: View>(_ title: String, @ViewBuilder _ control: () -> Control) -> some View {
+        VStack(spacing: 0) {
+            Divider().opacity(0.5).padding(.leading, 12)
+                .frame(height: 0.5).clipped()
+            HStack {
+                Text(title).font(.system(size: 13))
+                Spacer(minLength: 12)
+                control()
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 32)
+        }
+    }
+
+    private func toggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
+        settingsRow(title) {
+            Toggle("", isOn: isOn).toggleStyle(.appleNative).labelsHidden()
+        }
+    }
+
+    private func pickerRow<T: Hashable>(_ title: String, selection: Binding<T>, options: [T], label: @escaping (T) -> String) -> some View {
+        settingsRow(title) {
+            Picker("", selection: selection) {
+                ForEach(options, id: \.self) { Text(label($0)).tag($0) }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .labelsHidden()
+            .fixedSize()
+        }
     }
 
     @ViewBuilder
