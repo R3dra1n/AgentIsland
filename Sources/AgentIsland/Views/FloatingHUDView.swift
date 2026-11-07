@@ -94,8 +94,8 @@ public struct FloatingHUDView: View {
         let opensByItself = !attention.subtracting(dismissedAttention).isEmpty
         let targetOpen = opensByItself || manuallyOpen
         let isOpen = shownOpen
-        let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
-        let targetCapsule = HUDStyle.capsuleSize(isOpen: targetOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
+        let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, maxOpenHeight: maximumOpenHeight)
+        let targetCapsule = HUDStyle.capsuleSize(isOpen: targetOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, maxOpenHeight: maximumOpenHeight)
         let openHeight = HUDStyle.openHeight(rows: items.count)
         let rowsNeedScroll = openHeight > capsule.height && isOpen
         let shape = RoundedRectangle(cornerRadius: isOpen ? HUDStyle.openCornerRadius : HUDStyle.closedCornerRadius, style: .continuous)
@@ -103,12 +103,16 @@ public struct FloatingHUDView: View {
 
         ZStack(alignment: .top) {
             // Closed layer: one dot per assistant.
-            HStack(spacing: HUDStyle.dotSpacing) {
+            HStack(spacing: appState.hudShowsIcons ? HUDStyle.iconSpacing : HUDStyle.dotSpacing) {
                 ForEach(lights) { dot in
-                    HUDDotView(state: dot.state, reduceMotion: reduceMotion)
+                    HUDDotView(state: dot.state, reduceMotion: reduceMotion, icon: appState.hudShowsIcons ? dot.id : nil)
                         .help("\(dot.name)：\(dot.state.title)")
+                        // An assistant arriving or leaving fades; it never slides
+                        // the others sideways.
+                        .transition(.opacity)
                 }
             }
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: lights.map(\.id))
             .frame(width: capsule.width, height: HUDStyle.closedSize.height)
             .opacity(isOpen ? 0 : 1)
             .animation(reduceMotion ? nil : HUDStyle.dotsFade, value: isOpen)
@@ -157,7 +161,10 @@ public struct FloatingHUDView: View {
         #endif
         .animation(morph, value: isOpen)
         .animation(morph, value: items.count)
-        .animation(morph, value: lights.count)
+        // Width changes from dots coming and going use a plain ease, not the
+        // spring, whose overshoot made the dots wobble left and right.
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: lights.count)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: appState.hudShowsIcons)
         .padding(HUDStyle.windowMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .contextMenu { contextMenuItems() }
@@ -203,6 +210,7 @@ public struct FloatingHUDView: View {
                 get: { appState.hudDisplayMode == .always },
                 set: { if $0 { appState.hudDisplayMode = .always } else { appState.hudDisplayMode = .whenActive } }
             ))
+            Toggle("收起时显示图标", isOn: $appState.hudShowsIcons)
             Toggle("发光效果", isOn: $appState.showHUDGlow)
             Divider()
             Button(role: .destructive) {
@@ -219,14 +227,23 @@ public struct FloatingHUDView: View {
 struct HUDDotView: View {
     let state: AIState
     var reduceMotion: Bool = false
+    /// Provider id ("codex", "claude", "antigravity") to draw its icon, tinted by
+    /// the state, instead of a plain dot.
+    var icon: String? = nil
     @State private var dim = false
 
     private var shouldPulse: Bool { state == .running && !reduceMotion }
 
     var body: some View {
-        Circle()
-            .fill(HUDStyle.light(for: state))
-            .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
+        Group {
+            if let icon {
+                AIIconView(provider: icon, size: HUDStyle.iconSize, color: HUDStyle.light(for: state))
+            } else {
+                Circle()
+                    .fill(HUDStyle.light(for: state))
+                    .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
+            }
+        }
             .opacity(dim ? HUDStyle.pulseOpacity : 1)
             .scaleEffect(dim ? HUDStyle.pulseScale : 1)
             // Scoped to `dim` instead of `withAnimation`, so the endless pulse

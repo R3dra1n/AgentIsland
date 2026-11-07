@@ -35,17 +35,21 @@ enum HUDStyle {
 
     /// The closed capsule is 112 wide; with many assistants it widens just enough
     /// to keep every dot inside it.
-    static func closedWidth(dots: Int) -> CGFloat {
+    static let iconSize: CGFloat = 16
+    static let iconSpacing: CGFloat = 14
+
+    static func closedWidth(dots: Int, icons: Bool = false) -> CGFloat {
         let n = CGFloat(max(0, dots))
-        let needed = n * dotSize + max(0, n - 1) * dotSpacing + 2 * 8
+        let size = icons ? iconSize : dotSize, spacing = icons ? iconSpacing : dotSpacing
+        let needed = n * size + max(0, n - 1) * spacing + 2 * 8
         return max(closedSize.width, needed)
     }
 
-    static func capsuleSize(isOpen: Bool, rows: Int, dots: Int, maxOpenHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
+    static func capsuleSize(isOpen: Bool, rows: Int, dots: Int, icons: Bool = false, maxOpenHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
         if isOpen {
             return CGSize(width: openWidth, height: min(openHeight(rows: rows), max(closedSize.height, maxOpenHeight)))
         }
-        return CGSize(width: closedWidth(dots: dots), height: closedSize.height)
+        return CGSize(width: closedWidth(dots: dots, icons: icons), height: closedSize.height)
     }
 
     /// Size of the whole window content for a capsule of `capsule`.

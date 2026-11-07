@@ -36,6 +36,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     }
 
     // Status Bar Settings: Three independent toggles
+    /// Closed capsule shows each assistant's icon (tinted by its state) instead of a dot.
+    @Published public var hudShowsIcons: Bool = false {
+        didSet { UserDefaults.standard.set(hudShowsIcons, forKey: "hudShowsIcons") }
+    }
     @Published public var hudOpacity: Double = 1.0 {
         didSet {
             UserDefaults.standard.set(hudOpacity, forKey: "hudOpacity")
@@ -351,6 +355,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         if UserDefaults.standard.object(forKey: "soundAlertEnabled") != nil {
             self.soundAlertEnabled = UserDefaults.standard.bool(forKey: "soundAlertEnabled")
         }
+        self.hudShowsIcons = UserDefaults.standard.bool(forKey: "hudShowsIcons")
         if UserDefaults.standard.object(forKey: "hudOpacity") != nil {
             self.hudOpacity = UserDefaults.standard.double(forKey: "hudOpacity")
         }

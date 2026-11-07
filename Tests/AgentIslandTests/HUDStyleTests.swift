@@ -82,3 +82,10 @@ final class HUDStyleTests: XCTestCase {
         XCTAssertTrue(HUDStyle.attentionKeys([item("a", .running)]).isEmpty)
     }
 }
+
+final class HUDIconStyleTests: XCTestCase {
+    func testIconsWidenTheClosedCapsuleOnlyWhenNeeded() {
+        XCTAssertEqual(HUDStyle.closedWidth(dots: 3, icons: true), HUDStyle.closedSize.width)
+        XCTAssertGreaterThan(HUDStyle.closedWidth(dots: 6, icons: true), HUDStyle.closedWidth(dots: 6, icons: false))
+    }
+}

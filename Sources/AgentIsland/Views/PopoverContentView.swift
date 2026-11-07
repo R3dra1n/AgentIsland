@@ -223,6 +223,16 @@ public struct PopoverContentView: View {
             }
 
             HStack {
+                Text("收起时显示助手图标")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.primary)
+                Spacer()
+                Toggle("", isOn: $appState.hudShowsIcons)
+                    .toggleStyle(.appleNative)
+                    .labelsHidden()
+            }
+
+            HStack {
                 Text("灵动岛边缘光效")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(.primary)
