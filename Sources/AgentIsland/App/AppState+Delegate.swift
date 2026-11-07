@@ -8,7 +8,18 @@ extension AppState {
         let now = Date()
         let lastAck = lastAcknowledgedDates[observer.id] ?? .distantPast
         let activeDate = observer.lastActiveDate ?? .distantPast
-        let isAlreadyAcknowledged = lastAck >= activeDate
+        var isAlreadyAcknowledged = lastAck >= activeDate
+        if observer.id == "antigravity", !isAlreadyAcknowledged {
+            // The provider-level mark is only kept in memory, so after a restart
+            // it is empty and a finished conversation the user had already
+            // viewed came back as "done". The per-conversation marks are
+            // persisted: if every finished conversation is covered by one,
+            // there is nothing new.
+            let finished = antigravityObserver.sessions.filter { $0.state == .completed }
+            isAlreadyAcknowledged = !finished.isEmpty && finished.allSatisfy {
+                Self.viewMarkCovers(acknowledgedAt: antigravityAcknowledgedSessions[$0.id], finishedAt: $0.completedAt ?? $0.lastActiveDate)
+            }
+        }
 
         if observer.id == "codex" {
             if let codex = observer as? CodexObserver {

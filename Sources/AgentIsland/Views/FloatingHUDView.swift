@@ -311,7 +311,7 @@ private struct OverflowChipView: View {
 
     var body: some View {
         HStack(spacing: HUDStyle.rowContentSpacing) {
-            HUDDotView(state: item.state)
+            HUDDotView(state: item.state, icon: appState.hudShowsIcons ? providerID : nil)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
                     .font(.system(size: 13, weight: .semibold))
@@ -500,7 +500,9 @@ public struct AISegmentView: View {
 
     public var body: some View {
         HStack(spacing: HUDStyle.rowContentSpacing) {
-            HUDDotView(state: item.state)
+            // The row's light follows the closed capsule: an icon when the
+            // capsule shows icons, a dot when it shows dots.
+            HUDDotView(state: item.state, icon: appState.hudShowsIcons ? item.icon : nil)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
