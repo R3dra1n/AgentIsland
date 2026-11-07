@@ -105,7 +105,26 @@ public final class FloatingHUDWindowController: NSObject {
     /// through running, done, needs-you and standby so the morph can be watched
     /// (and recorded) without real assistants. Never compiled into a release.
     private func startPreviewDemoIfRequested(_ state: AppState) {
-        guard ProcessInfo.processInfo.environment["AGENTISLAND_DEMO"] == "1" else { return }
+        let env = ProcessInfo.processInfo.environment
+        if env["AGENTISLAND_DEMO_POPOVER"] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { StatusItemPopoverController.shared.togglePopover() }
+        }
+        // AGENTISLAND_DEMO=scenes (cycle) or AGENTISLAND_DEMO_SCENE=1|2|3 (hold one):
+        // fixed, invented scenes for documentation images. Nothing here reads a
+        // real session.
+        if let scene = env["AGENTISLAND_DEMO_SCENE"].flatMap(Int.init) {
+            Self.applyDemoScene(scene, to: state)
+            return
+        }
+        if env["AGENTISLAND_DEMO"] == "scenes" {
+            var scene = 0
+            demoTimer = Timer.scheduledTimer(withTimeInterval: 4.5, repeats: true) { _ in
+                MainActor.assumeIsolated { scene = scene % 4 + 1; Self.applyDemoScene(scene, to: state) }
+            }
+            demoTimer?.fire()
+            return
+        }
+        guard env["AGENTISLAND_DEMO"] == "1" else { return }
         let steps: [AIState] = [.running, .completed, .awaitingInput, .running, .idle]
         var index = 0
         demoTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
@@ -115,6 +134,25 @@ public final class FloatingHUDWindowController: NSObject {
             }
         }
         demoTimer?.fire()
+    }
+
+    private static func applyDemoScene(_ scene: Int, to state: AppState) {
+        state.testModeActive = true
+        state.claudeTier = "Pro"
+        state.cursorState = .idle; state.windsurfState = .idle; state.traeState = .idle
+        let (codex, agy, claude): (AIState, AIState, AIState)
+        switch scene {
+        case 1: (codex, agy, claude) = (.idle, .idle, .idle)
+        case 2: (codex, agy, claude) = (.running, .idle, .running)
+        case 3: (codex, agy, claude) = (.completed, .running, .awaitingInput)
+        default: (codex, agy, claude) = (.idle, .completed, .idle)
+        }
+        state.codexState = codex; state.antigravityState = agy; state.claudeState = claude
+        state.codexNeedsAck = codex == .completed; state.antigravityNeedsAck = agy == .completed; state.claudeNeedsAck = claude == .completed
+        state.codexDescription = codex == .completed ? "测试已通过，改动已就绪" : (codex == .running ? "正在运行测试" : "待命中")
+        state.antigravityDescription = agy == .completed ? "方案已生成" : (agy == .running ? "正在整理需求" : "待命中")
+        state.claudeDescription = claude == .awaitingInput ? "要运行 swift build，是否允许？" : (claude == .running ? "正在阅读代码" : "待命中")
+        state.aggregatedState = [codex, agy, claude].max() ?? .idle
     }
     #else
     private func startPreviewDemoIfRequested(_ state: AppState) {}

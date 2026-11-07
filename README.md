@@ -2,6 +2,14 @@
 
 AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.3.2**。
 
+![AgentIsland 概览：展开的行列表，以及收起时的图标、圆点和直列形态](docs/images/overview.png)
+
+<p align="center"><img src="docs/images/hud-demo.gif" alt="胶囊在收起与展开之间变形的演示" width="640"></p>
+
+*图片中的助手名称、状态文字和对话内容都是演示用的虚构数据。*
+
+**In English:** AgentIsland is a macOS (14+) floating HUD, styled like the iPhone Dynamic Island, that shows what your AI coding assistants (Codex, Antigravity, Claude Code; experimental: Cursor, Windsurf, Trae) are doing. It stays a small capsule of status lights, and opens by itself when an assistant needs you or has finished. Interface text is in Chinese. Builds are ad-hoc signed and not notarized, and there is no public release yet; see the status section below.
+
 ## 状态
 
 目前尚无公开 Release。构建使用临时（ad-hoc）签名、未公证，也没有在干净的机器上验证过，因此还不适合作为开箱即用的公开发行版。验证范围、已知限制与发布顺序见 [开发交接与路线图](docs/PROJECT-HANDOFF.md)，接手的开发者或 AI 请先读它。
@@ -29,7 +37,9 @@ AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏
 
 ## 设置面板
 
-点菜单栏图标打开，分四组：**外观**（主题）、**灵动岛**（布局、详情、展示模式、透明度、收起时显示助手图标、边缘光效）、**状态栏**（图标、状态圆点、详情文字）、**通知与集成**（提示音、可选 Hook、Antigravity 提前验证与授权）。
+点菜单栏图标打开（下图），分四组：**外观**（主题）、**灵动岛**（布局、详情、展示模式、透明度、收起时显示助手图标、边缘光效）、**状态栏**（图标、状态圆点、详情文字）、**通知与集成**（提示音、可选 Hook、Antigravity 提前验证与授权）。
+
+<p align="center"><img src="docs/images/settings.png" alt="设置面板" width="330"></p>
 
 行上的「打开」会去到会话实际所在的应用：Codex 跳到对应线程，Antigravity 尽量跳到对应会话并把已完成的标为已查看，Claude 按会话来源打开桌面应用或终端（Claude 桌面端没有指向单个会话的链接，只能把应用带到前台）。
 

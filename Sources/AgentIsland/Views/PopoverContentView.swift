@@ -51,7 +51,13 @@ public struct PopoverContentView: View {
             ScrollView(.vertical, showsIndicators: true) {
                 VStack(spacing: 12) {
                     headerSection
+                    #if AGENTISLAND_ISOLATED_PREVIEW
+                    // Documentation images only: show the settings without the
+                    // assistant cards (which carry the local account's plan name).
+                    if ProcessInfo.processInfo.environment["AGENTISLAND_DEMO_SETTINGS_ONLY"] != "1" { providersSection }
+                    #else
                     providersSection
+                    #endif
                     preferencesSection
                 }
                 .padding(14)
