@@ -38,18 +38,55 @@ enum HUDStyle {
     static let iconSize: CGFloat = 16
     static let iconSpacing: CGFloat = 14
 
-    static func closedWidth(dots: Int, icons: Bool = false) -> CGFloat {
+    /// Length of the closed capsule along its dot axis: the 112 pt minimum, or
+    /// as long as the dots need.
+    static func closedLength(dots: Int, icons: Bool = false) -> CGFloat {
         let n = CGFloat(max(0, dots))
         let size = icons ? iconSize : dotSize, spacing = icons ? iconSpacing : dotSpacing
         let needed = n * size + max(0, n - 1) * spacing + 2 * 8
         return max(closedSize.width, needed)
     }
 
-    static func capsuleSize(isOpen: Bool, rows: Int, dots: Int, icons: Bool = false, maxOpenHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
+    static func closedWidth(dots: Int, icons: Bool = false) -> CGFloat {
+        closedLength(dots: dots, icons: icons)
+    }
+
+    /// The closed capsule: wide and short with dots in a row, or (the "直列"
+    /// layout) a narrow pill with the dots stacked top to bottom.
+    static func closedCapsule(dots: Int, icons: Bool = false, vertical: Bool = false) -> CGSize {
+        let length = closedLength(dots: dots, icons: icons)
+        return vertical ? CGSize(width: closedSize.height, height: length) : CGSize(width: length, height: closedSize.height)
+    }
+
+    static func capsuleSize(isOpen: Bool, rows: Int, dots: Int, icons: Bool = false, vertical: Bool = false, maxOpenHeight: CGFloat = .greatestFiniteMagnitude) -> CGSize {
         if isOpen {
             return CGSize(width: openWidth, height: min(openHeight(rows: rows), max(closedSize.height, maxOpenHeight)))
         }
-        return CGSize(width: closedWidth(dots: dots, icons: icons), height: closedSize.height)
+        return closedCapsule(dots: dots, icons: icons, vertical: vertical)
+    }
+
+    // MARK: Edge glow
+
+    /// The rim light, if the setting is on: red when something needs the user
+    /// (it breathes), yellow while running, green when finished, a faint white
+    /// rim when everything is idle.
+    static func glowHex(for state: AIState) -> UInt32? {
+        switch state {
+        case .awaitingInput, .running, .completed: return lightHex(for: state)
+        default: return nil
+        }
+    }
+    static let glowIdleOpacity: Double = 0.14
+    static func glowOpacity(for state: AIState, phase: Double) -> Double {
+        switch state {
+        case .awaitingInput: return 0.95 - 0.5 * phase
+        case .running: return 0.65
+        case .completed: return 0.75
+        default: return glowIdleOpacity
+        }
+    }
+    static func glowShadowOpacity(for state: AIState, phase: Double) -> Double {
+        state == .awaitingInput ? 0.6 - 0.4 * phase : 0
     }
 
     /// Size of the whole window content for a capsule of `capsule`.

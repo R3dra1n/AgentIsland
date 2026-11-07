@@ -139,12 +139,27 @@ extension AppState {
         case .desktopNeedsInput:
             if let url = URL(string: "claude://code/needs-input?source=desktop_action") { NSWorkspace.shared.open(url) }
         case .desktopApp:
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
-                let config = NSWorkspace.OpenConfiguration(); config.activates = true
-                NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-            } else { focusApp(for: "claude") }
+            openClaudeDesktopApp()
         case .terminal:
-            focusApp(for: "claude")
+            // A conversation we cannot place (no recorded host) used to do
+            // nothing when no terminal was running. The desktop app is the
+            // better guess than silence.
+            if Self.terminalAppRunning() { focusApp(for: "claude") } else { openClaudeDesktopApp() }
+        }
+    }
+
+    private func openClaudeDesktopApp() {
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
+            let config = NSWorkspace.OpenConfiguration(); config.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
+        } else { focusApp(for: "claude") }
+    }
+
+    nonisolated static let terminalNames = ["iTerm2", "Terminal", "Ghostty", "Warp", "Alacritty", "Kitty"]
+
+    static func terminalAppRunning() -> Bool {
+        NSWorkspace.shared.runningApplications.contains { app in
+            terminalNames.contains { (app.localizedName ?? "").localizedCaseInsensitiveContains($0) }
         }
     }
 

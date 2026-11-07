@@ -100,4 +100,25 @@ final class HUDPulseTests: XCTestCase {
             XCTAssertTrue((0...1).contains(p))
         }
     }
+
+    func testVerticalClosedCapsuleStacksDots() {
+        let flat = HUDStyle.closedCapsule(dots: 3)
+        let tall = HUDStyle.closedCapsule(dots: 3, vertical: true)
+        XCTAssertEqual(flat, CGSize(width: 112, height: 28))
+        XCTAssertEqual(tall, CGSize(width: 28, height: 112))
+        XCTAssertGreaterThan(HUDStyle.closedCapsule(dots: 8, vertical: true).height, 112)
+        // Opening is the same shape either way.
+        XCTAssertEqual(HUDStyle.capsuleSize(isOpen: true, rows: 2, dots: 2, vertical: true),
+                       HUDStyle.capsuleSize(isOpen: true, rows: 2, dots: 2))
+    }
+
+    func testGlowFollowsTheMostPressingState() {
+        XCTAssertEqual(HUDStyle.glowHex(for: .awaitingInput), HUDStyle.redHex)
+        XCTAssertEqual(HUDStyle.glowHex(for: .running), HUDStyle.yellowHex)
+        XCTAssertEqual(HUDStyle.glowHex(for: .completed), HUDStyle.greenHex)
+        XCTAssertNil(HUDStyle.glowHex(for: .idle))
+        // Red breathes; only red casts a halo.
+        XCTAssertGreaterThan(HUDStyle.glowOpacity(for: .awaitingInput, phase: 0), HUDStyle.glowOpacity(for: .awaitingInput, phase: 1))
+        XCTAssertEqual(HUDStyle.glowShadowOpacity(for: .running, phase: 0), 0)
+    }
 }

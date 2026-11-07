@@ -94,8 +94,11 @@ public struct FloatingHUDView: View {
         let opensByItself = !attention.subtracting(dismissedAttention).isEmpty
         let targetOpen = opensByItself || manuallyOpen
         let isOpen = shownOpen
-        let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, maxOpenHeight: maximumOpenHeight)
-        let targetCapsule = HUDStyle.capsuleSize(isOpen: targetOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, maxOpenHeight: maximumOpenHeight)
+        let vertical = appState.hudLayoutMode == .vertical
+        let closed = HUDStyle.closedCapsule(dots: lights.count, icons: appState.hudShowsIcons, vertical: vertical)
+        let dominant = items.map(\.state).max() ?? .idle
+        let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, vertical: vertical, maxOpenHeight: maximumOpenHeight)
+        let targetCapsule = HUDStyle.capsuleSize(isOpen: targetOpen, rows: items.count, dots: lights.count, icons: appState.hudShowsIcons, vertical: vertical, maxOpenHeight: maximumOpenHeight)
         let openHeight = HUDStyle.openHeight(rows: items.count)
         let rowsNeedScroll = openHeight > capsule.height && isOpen
         let shape = RoundedRectangle(cornerRadius: isOpen ? HUDStyle.openCornerRadius : HUDStyle.closedCornerRadius, style: .continuous)
@@ -103,7 +106,7 @@ public struct FloatingHUDView: View {
 
         ZStack(alignment: .top) {
             // Closed layer: one dot per assistant.
-            HStack(spacing: appState.hudShowsIcons ? HUDStyle.iconSpacing : HUDStyle.dotSpacing) {
+            dotStack(vertical: vertical, spacing: appState.hudShowsIcons ? HUDStyle.iconSpacing : HUDStyle.dotSpacing) {
                 ForEach(lights) { dot in
                     HUDDotView(state: dot.state, reduceMotion: reduceMotion, icon: appState.hudShowsIcons ? dot.id : nil)
                         .help("\(dot.name)：\(dot.state.title)")
@@ -113,7 +116,7 @@ public struct FloatingHUDView: View {
                 }
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: lights.map(\.id))
-            .frame(width: capsule.width, height: HUDStyle.closedSize.height)
+            .frame(width: closed.width, height: closed.height)
             .opacity(isOpen ? 0 : 1)
             .animation(reduceMotion ? nil : HUDStyle.dotsFade, value: isOpen)
             .allowsHitTesting(!isOpen)
@@ -142,6 +145,7 @@ public struct FloatingHUDView: View {
                 .shadow(color: .black.opacity(0.5), radius: 17, x: 0, y: 10)
         )
         .clipShape(shape)
+        .overlay { if appState.showHUDGlow { HUDGlowView(state: dominant, shape: shape, reduceMotion: reduceMotion) } }
         .contentShape(shape)
         .onTapGesture {
             if opensByItself {
@@ -186,6 +190,11 @@ public struct FloatingHUDView: View {
                 if !Task.isCancelled { shownOpen = true }
             }
         }
+    }
+
+    @ViewBuilder
+    private func dotStack<Content: View>(vertical: Bool, spacing: CGFloat, @ViewBuilder _ content: () -> Content) -> some View {
+        if vertical { VStack(spacing: spacing, content: content) } else { HStack(spacing: spacing, content: content) }
     }
 
     private func rowsStack(_ items: [AIObserverItem]) -> some View {
@@ -698,5 +707,29 @@ struct ActionDetailPopover: View {
         }
         .padding(12)
         .frame(width: 380)
+    }
+}
+
+
+/// The rim light around the capsule (setting "发光效果"). Red breathes, driven by
+/// the clock like the status lights; the other states are steady.
+struct HUDGlowView: View {
+    let state: AIState
+    let shape: RoundedRectangle
+    let reduceMotion: Bool
+
+    var body: some View {
+        let hex = HUDStyle.glowHex(for: state)
+        let animated = state == .awaitingInput && !reduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animated)) { context in
+            let phase = animated ? HUDStyle.pulsePhase(at: context.date.timeIntervalSinceReferenceDate) : 0
+            shape
+                .strokeBorder(hex.map { HUDStyle.color(hex: $0, opacity: HUDStyle.glowOpacity(for: state, phase: phase)) }
+                              ?? Color.white.opacity(HUDStyle.glowIdleOpacity),
+                              lineWidth: hex == nil ? 1 : 1.5)
+                .shadow(color: HUDStyle.color(hex: HUDStyle.redHex, opacity: HUDStyle.glowShadowOpacity(for: state, phase: phase)), radius: 10)
+        }
+        .allowsHitTesting(false)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state)
     }
 }
