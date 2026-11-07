@@ -1,6 +1,6 @@
 # AgentIsland
 
-AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.3.2**。
+AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏幕上的灵动岛式悬浮窗里显示各助手的执行状态与待处理问题，并在能确认目标会话时直接回复。需要 macOS 14 或更新版本，当前版本 **1.3.3**。
 
 <p align="center"><img src="docs/images/hud-story.gif" alt="一边看视频，Codex 完成了：胶囊从屏幕上方弹出，点「打开」直接切到 Codex 窗口" width="880"></p>
 
@@ -29,7 +29,7 @@ AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏
 
 悬浮窗是一粒会变形的黑色胶囊，风格接近 iPhone 的灵动岛，详见 [docs/hud-style.md](docs/hud-style.md)：
 
-- **收起**时每个助手一个状态点；执行中的会缓缓呼吸。可在设置里改成显示助手图标，展开后各行的前导标志也跟着用图标或圆点。
+- **收起**时每一行一个状态点（同一助手有两个会话就是两个点，各自的颜色，已完成的不会被另一个执行中的盖住）；执行中的会缓缓呼吸。可在设置里改成显示助手图标，展开后各行的前导标志也跟着用图标或圆点。
 - **自动展开**：有会话需要处理（红）或已完成未查看（绿）时展开成行列表。点胶囊可手动展开或收起；已点收起的那几项不会再弹出，直到有新的。
 - 开合用弹簧动画，窗口中心保持不动；系统开启「减弱动态效果」时直接切换。
 - **边缘光效**：胶囊外沿一圈细光边，红（呼吸）、黄、绿，全部待命时是淡白，可在设置中关闭。
@@ -76,7 +76,7 @@ bash scripts/build_isolated_preview.sh    # 隔离预览  -> build-output/previe
 bash scripts/package.sh                   # 打包 zip、校验值与安装说明 -> dist/
 ```
 
-版本号只写在根目录的 `VERSION`。两个渠道互不共用状态：正式渠道的 bundle id 是 `io.github.r3dra1n.AgentIsland`，显示 `1.3.2`；隔离预览使用 `local.agentisland.isolatedpreview`，显示 `1.3.2-preview`，有自己的偏好与进程锁，可与正式版同时运行，窗口上标有「隔离测试版」。
+版本号只写在根目录的 `VERSION`。两个渠道互不共用状态：正式渠道的 bundle id 是 `io.github.r3dra1n.AgentIsland`，显示 `1.3.3`；隔离预览使用 `local.agentisland.isolatedpreview`，显示 `1.3.3-preview`，有自己的偏好与进程锁，可与正式版同时运行，窗口上标有「隔离测试版」。
 
 ## Hook 与隐私
 

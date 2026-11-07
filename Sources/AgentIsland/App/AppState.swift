@@ -475,8 +475,37 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         if codexNeedsAck && isAppActive(name: name, bundleId: bundleId, for: "codex") {
             acknowledgeCodex()
         }
-        if claudeNeedsAck && isAppActive(name: name, bundleId: bundleId, for: "claude") {
+        // Claude: switching to the app a finished conversation runs in is
+        // looking at it. This is decided per conversation: the provider-level
+        // flag is false whenever another conversation is still running, which
+        // used to leave a finished one waiting for a click.
+        for id in Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
+                                                        frontName: name, frontBundle: bundleId) {
+            acknowledgeClaudeSession(id)
+        }
+        if claudeSessions.isEmpty, claudeNeedsAck, isAppActive(name: name, bundleId: bundleId, for: "claude") {
             acknowledgeClaude()
+        }
+    }
+
+    /// Finished, not yet viewed Claude conversations that the activated app is
+    /// the host of: the desktop app for conversations started there, a terminal
+    /// or editor for the rest. Claude's desktop app does not say which
+    /// conversation is on screen, so every finished one it hosts counts.
+    nonisolated static func claudeSessionsViewedByActivating(sessions: [ClaudeSessionSnapshot], acknowledged: [String: Date],
+                                                             frontName: String, frontBundle: String) -> [String] {
+        let desktopFront = frontBundle.localizedCaseInsensitiveContains("anthropic") || frontName.localizedCaseInsensitiveContains("Claude")
+        let terminalFront = !desktopFront && (frontName.localizedCaseInsensitiveContains("Terminal") || frontName.localizedCaseInsensitiveContains("iTerm")
+            || frontName.localizedCaseInsensitiveContains("Ghostty") || frontName.localizedCaseInsensitiveContains("Warp")
+            || frontBundle.localizedCaseInsensitiveContains("cursor") || frontBundle.localizedCaseInsensitiveContains("vscode")
+            || frontName.localizedCaseInsensitiveContains("Code"))
+        guard desktopFront || terminalFront else { return [] }
+        return sessions.compactMap { session in
+            guard session.state == .completed else { return nil }
+            let finished = session.completedAt ?? session.lastActiveDate
+            if let finished, (acknowledged[session.id] ?? .distantPast) >= finished { return nil }
+            let onDesktop = (session.entrypoint ?? "").localizedCaseInsensitiveContains("desktop")
+            return onDesktop == desktopFront ? session.id : nil
         }
     }
 

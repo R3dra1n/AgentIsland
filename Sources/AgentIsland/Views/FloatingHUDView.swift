@@ -27,28 +27,6 @@ public struct FloatingHUDView: View {
         return appState.displayedObservers
     }
 
-    /// One dot per assistant: several conversations of one assistant share a dot
-    /// that takes the colour of the most pressing of them.
-    private struct HUDDot: Identifiable {
-        let id: String
-        let name: String
-        var state: AIState
-    }
-
-    private func dots(for items: [AIObserverItem]) -> [HUDDot] {
-        var result: [HUDDot] = []
-        for item in items {
-            let key = item.icon
-            if let index = result.firstIndex(where: { $0.id == key }) {
-                if item.state > result[index].state { result[index].state = item.state }
-            } else {
-                let name = item.name.components(separatedBy: " · ").first ?? item.name
-                result.append(HUDDot(id: key, name: item.id.hasPrefix(AppState.overflowPrefix) ? key : name, state: item.state))
-            }
-        }
-        return result
-    }
-
     @ViewBuilder
     private func segment(_ item: AIObserverItem) -> some View {
         if item.id.hasPrefix(AppState.overflowPrefix) {
@@ -89,7 +67,7 @@ public struct FloatingHUDView: View {
 
     public var body: some View {
         let items = itemsToShow
-        let lights = dots(for: items)
+        let lights = HUDStyle.closedLights(items)
         let attention = HUDStyle.attentionKeys(items)
         let opensByItself = !attention.subtracting(dismissedAttention).isEmpty
         let targetOpen = opensByItself || manuallyOpen
@@ -108,7 +86,7 @@ public struct FloatingHUDView: View {
             // Closed layer: one dot per assistant.
             dotStack(vertical: vertical, spacing: appState.hudShowsIcons ? HUDStyle.iconSpacing : HUDStyle.dotSpacing) {
                 ForEach(lights) { dot in
-                    HUDDotView(state: dot.state, reduceMotion: reduceMotion, icon: appState.hudShowsIcons ? dot.id : nil)
+                    HUDDotView(state: dot.state, reduceMotion: reduceMotion, icon: appState.hudShowsIcons ? dot.icon : nil)
                         .help("\(dot.name)：\(dot.state.title)")
                         // An assistant arriving or leaving fades; it never slides
                         // the others sideways.

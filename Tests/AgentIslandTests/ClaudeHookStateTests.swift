@@ -314,4 +314,22 @@ final class ClaudeMostRelevantSessionTests: XCTestCase {
         XCTAssertEqual(AppState.mostRelevantClaudeSession([snap("old", .completed, 90, "cli"), snap("new", .completed, 5, "claude-desktop")])?.id, "new")
         XCTAssertNil(AppState.mostRelevantClaudeSession([]))
     }
+
+    func testSwitchingToTheHostAppViewsItsFinishedConversations() {
+        let t = Date(timeIntervalSince1970: 1_000)
+        func session(_ id: String, _ state: AIState, _ entry: String?) -> ClaudeSessionSnapshot {
+            ClaudeSessionSnapshot(id: id, state: state, description: "", actionDetail: nil, lastActiveDate: t, completedAt: t, entrypoint: entry)
+        }
+        let sessions = [session("desk-done", .completed, "claude-desktop"), session("desk-run", .running, "claude-desktop"),
+                        session("cli-done", .completed, "cli")]
+        // A second conversation is still running: the finished one is still viewed.
+        XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
+            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop"), ["desk-done"])
+        XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
+            frontName: "Terminal", frontBundle: "com.apple.Terminal"), ["cli-done"])
+        XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: ["desk-done": t],
+            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop"), [])
+        XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
+            frontName: "Safari", frontBundle: "com.apple.Safari"), [])
+    }
 }

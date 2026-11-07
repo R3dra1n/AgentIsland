@@ -121,4 +121,17 @@ final class HUDPulseTests: XCTestCase {
         XCTAssertGreaterThan(HUDStyle.glowOpacity(for: .awaitingInput, phase: 0), HUDStyle.glowOpacity(for: .awaitingInput, phase: 1))
         XCTAssertEqual(HUDStyle.glowShadowOpacity(for: .running, phase: 0), 0)
     }
+
+    @MainActor func testClosedCapsuleHasOneLightPerRow() {
+        let rows = [
+            AIObserverItem(id: "claude-session:a", name: "Claude · 会话 1", icon: "claude", isEnabled: true, state: .running, description: ""),
+            AIObserverItem(id: "claude-session:b", name: "Claude · 会话 2", icon: "claude", isEnabled: true, state: .completed, description: ""),
+            AIObserverItem(id: "codex", name: "Codex", icon: "codex", isEnabled: true, state: .idle, description: ""),
+        ]
+        let lights = HUDStyle.closedLights(rows)
+        XCTAssertEqual(lights.map(\.state), [.running, .completed, .idle])
+        XCTAssertEqual(Set(lights.map(\.id)).count, 3)
+        XCTAssertEqual(lights.map(\.icon), ["claude", "claude", "codex"])
+        XCTAssertEqual(lights[0].name, "Claude")
+    }
 }

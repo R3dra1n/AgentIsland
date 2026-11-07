@@ -65,6 +65,28 @@ enum HUDStyle {
         return closedCapsule(dots: dots, icons: icons, vertical: vertical)
     }
 
+    // MARK: Closed lights
+
+    /// One light of the closed capsule.
+    struct ClosedLight: Identifiable, Equatable {
+        let id: String
+        /// Provider icon id, used when the capsule shows icons.
+        let icon: String
+        let name: String
+        let state: AIState
+    }
+
+    /// One light per row of the open list, so two conversations of one assistant
+    /// are two lights, each with its own colour: a finished one cannot hide
+    /// behind another that is still running.
+    @MainActor static func closedLights(_ items: [AIObserverItem]) -> [ClosedLight] {
+        items.map { item in
+            let name = item.name.components(separatedBy: " · ").first ?? item.name
+            return ClosedLight(id: item.id, icon: item.icon,
+                               name: item.id.hasPrefix(AppState.overflowPrefix) ? item.icon : name, state: item.state)
+        }
+    }
+
     // MARK: Edge glow
 
     /// The rim light, if the setting is on: red when something needs the user
