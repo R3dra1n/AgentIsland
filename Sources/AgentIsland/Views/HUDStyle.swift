@@ -80,7 +80,14 @@ enum HUDStyle {
         let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: opening ? 0.28 : 0.1)
         return opening ? curve.delay(0.12) : curve
     }
-    static let pulse = Animation.easeInOut(duration: 1.4).repeatForever(autoreverses: true)
+    /// One full breath (dim and back) takes 2.8 s: 1.4 s each way, as specified.
+    static let pulsePeriod: Double = 2.8
+    /// 0 (full) ... 1 (fully dimmed), an ease-in-out wave of time. Computed from
+    /// the clock rather than driven by an animation, so a layout or state change
+    /// elsewhere in the HUD cannot cancel it and leave a running light static.
+    static func pulsePhase(at time: TimeInterval) -> Double {
+        0.5 - 0.5 * cos(2 * Double.pi * time / pulsePeriod)
+    }
     static let pulseOpacity: Double = 0.45
     static let pulseScale: CGFloat = 0.8
 

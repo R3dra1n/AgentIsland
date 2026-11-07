@@ -89,3 +89,15 @@ final class HUDIconStyleTests: XCTestCase {
         XCTAssertGreaterThan(HUDStyle.closedWidth(dots: 6, icons: true), HUDStyle.closedWidth(dots: 6, icons: false))
     }
 }
+
+final class HUDPulseTests: XCTestCase {
+    func testPulsePhaseIsAFullBreathEveryPeriod() {
+        XCTAssertEqual(HUDStyle.pulsePhase(at: 0), 0, accuracy: 1e-9)
+        XCTAssertEqual(HUDStyle.pulsePhase(at: HUDStyle.pulsePeriod / 2), 1, accuracy: 1e-9)
+        XCTAssertEqual(HUDStyle.pulsePhase(at: HUDStyle.pulsePeriod), 0, accuracy: 1e-9)
+        for t in stride(from: 0.0, to: 6.0, by: 0.13) {
+            let p = HUDStyle.pulsePhase(at: t)
+            XCTAssertTrue((0...1).contains(p))
+        }
+    }
+}

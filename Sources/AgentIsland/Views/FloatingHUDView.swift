@@ -230,27 +230,31 @@ struct HUDDotView: View {
     /// Provider id ("codex", "claude", "antigravity") to draw its icon, tinted by
     /// the state, instead of a plain dot.
     var icon: String? = nil
-    @State private var dim = false
 
     private var shouldPulse: Bool { state == .running && !reduceMotion }
 
-    var body: some View {
-        Group {
-            if let icon {
-                AIIconView(provider: icon, size: HUDStyle.iconSize, color: HUDStyle.light(for: state))
-            } else {
-                Circle()
-                    .fill(HUDStyle.light(for: state))
-                    .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
-            }
+    @ViewBuilder
+    private var light: some View {
+        if let icon {
+            AIIconView(provider: icon, size: HUDStyle.iconSize, color: HUDStyle.light(for: state))
+        } else {
+            Circle()
+                .fill(HUDStyle.light(for: state))
+                .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
         }
-            .opacity(dim ? HUDStyle.pulseOpacity : 1)
-            .scaleEffect(dim ? HUDStyle.pulseScale : 1)
-            // Scoped to `dim` instead of `withAnimation`, so the endless pulse
-            // cannot attach itself to the capsule's size or the rows' layout.
-            .animation(dim ? HUDStyle.pulse : .easeOut(duration: 0.15), value: dim)
-            .onChange(of: shouldPulse, initial: true) { _, pulse in dim = pulse }
-            .accessibilityLabel(state.title)
+    }
+
+    var body: some View {
+        // A running light breathes (opacity 1 -> 0.45, scale 1 -> 0.8). The
+        // phase comes from the clock, and the timeline only ticks while running,
+        // so a standby HUD does no work at all.
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldPulse)) { context in
+            let phase = shouldPulse ? HUDStyle.pulsePhase(at: context.date.timeIntervalSinceReferenceDate) : 0
+            light
+                .opacity(1 - (1 - HUDStyle.pulseOpacity) * phase)
+                .scaleEffect(1 - (1 - HUDStyle.pulseScale) * CGFloat(phase))
+        }
+        .accessibilityLabel(state.title)
     }
 }
 
