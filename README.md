@@ -73,3 +73,5 @@ Antigravity 的后台回复首次使用时需明确同意：应用会临时读�
 提交前运行 `python3 scripts/check_public_source.py` 与 `bash scripts/test.sh`。前者只扫描部分常见敏感内容，不能替代历史、二进制、截图或人工审查。请按 [安全反馈](SECURITY.md) 私下报告敏感问题，遵循 [贡献指南](CONTRIBUTING.md)。
 
 本项目使用 [MIT](LICENSE)；第三方素材及商标说明见 [NOTICES](Resources/NOTICES.md)。
+
+界面里的助手图标来自 [LobeHub/lobe-icons](https://github.com/lobehub/lobe-icons)（MIT），仅用于识别对应产品；Codex／OpenAI、Claude／Anthropic、Cursor、Antigravity／Google、Windsurf、Trae 的名称与商标归各自所有者，本项目与它们没有关联，也未获其认可。
