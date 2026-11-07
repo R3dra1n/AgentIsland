@@ -4,11 +4,11 @@
 
 ## 获取与校验
 
-打包后，应用 ZIP、同名 `.sha256` 校验文件和 `INSTALL.md` 是三个并列文件，ZIP 中只有 App。文件名带版本号和架构，例如 `AgentIsland-1.2.4-macOS-arm64.zip`。把三个文件下载到同一目录，以 Apple Silicon 包放在「下载」目录为例：
+打包后，应用 ZIP、同名 `.sha256` 校验文件和 `INSTALL.md` 是三个并列文件，ZIP 中只有 App。文件名带版本号和架构，例如 `AgentIsland-1.3.1-macOS-arm64.zip`。把三个文件下载到同一目录，以 Apple Silicon 包放在「下载」目录为例：
 
 ```sh
 cd ~/Downloads
-shasum -a 256 -c AgentIsland-1.2.4-macOS-arm64.zip.sha256
+shasum -a 256 -c AgentIsland-1.3.1-macOS-arm64.zip.sha256
 ```
 
 显示 `OK` 表示 ZIP 与该校验文件一致；校验值本身仍需从可信渠道获取。
