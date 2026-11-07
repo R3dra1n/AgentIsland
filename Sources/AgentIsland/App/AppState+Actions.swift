@@ -207,7 +207,7 @@ extension AppState {
         let stillActive = antigravityObserver.sessions.contains { session in
             if session.state == .running || session.state == .awaitingInput { return true }
             guard session.state == .completed else { return false }
-            return (antigravityAcknowledgedSessions[session.id] ?? .distantPast) < (session.completedAt ?? session.lastActiveDate ?? .distantFuture)
+            return !Self.viewMarkCovers(acknowledgedAt: antigravityAcknowledgedSessions[session.id], finishedAt: session.completedAt ?? session.lastActiveDate)
         }
         if !stillActive { acknowledgeAntigravity() }
     }

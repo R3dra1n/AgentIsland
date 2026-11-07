@@ -149,4 +149,14 @@ final class SessionRowArrangementTests: XCTestCase {
             XCTAssertTrue(AppState.needsAttention(state), "\(state)")
         }
     }
+
+    func testViewMarkSurvivesTheHostRewritingTheFileJustAfter() {
+        let finished = Date(timeIntervalSince1970: 1_000_000)
+        // Marked 7 s before the host touched the file: still viewed.
+        XCTAssertTrue(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(-7), finishedAt: finished))
+        XCTAssertTrue(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(1), finishedAt: finished))
+        // A conversation that finished well after the mark is new again.
+        XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(-120), finishedAt: finished))
+        XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: nil, finishedAt: finished))
+    }
 }
