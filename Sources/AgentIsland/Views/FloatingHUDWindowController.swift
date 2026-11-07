@@ -118,7 +118,7 @@ public final class FloatingHUDWindowController: NSObject {
         }
         if env["AGENTISLAND_DEMO"] == "scenes" {
             var scene = 0
-            demoTimer = Timer.scheduledTimer(withTimeInterval: 4.5, repeats: true) { _ in
+            demoTimer = Timer.scheduledTimer(withTimeInterval: 3.2, repeats: true) { _ in
                 MainActor.assumeIsolated { scene = scene % 4 + 1; Self.applyDemoScene(scene, to: state) }
             }
             demoTimer?.fire()
