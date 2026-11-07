@@ -65,7 +65,9 @@ enum HUDStyle {
     /// Rows fade in over 0.3 s after a 0.2 s delay, so the capsule grows first;
     /// they fade out at once when it closes.
     static func rowsFade(opening: Bool) -> Animation {
-        let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.3)
+        // Closing is quick (0.12 s) so no half-faded row is left behind, clipped,
+        // while the capsule is still narrowing.
+        let curve = Animation.timingCurve(0.25, 0.1, 0.25, 1, duration: opening ? 0.3 : 0.12)
         return opening ? curve.delay(0.2) : curve
     }
     static let pulse = Animation.easeInOut(duration: 1.4).repeatForever(autoreverses: true)
@@ -120,6 +122,13 @@ enum HUDStyle {
     /// Opens on its own only for something that needs the user (red) or is
     /// finished and not yet viewed (green). A run in progress, a failure or a
     /// stand-by assistant stays as dots until the user taps the capsule.
+    /// What currently asks to open the capsule: one key per red or unviewed
+    /// green row (row id and state), so a *new* one can be told from one the
+    /// user has already collapsed on.
+    static func attentionKeys(_ items: [AIObserverItem]) -> Set<String> {
+        Set(items.filter { $0.state == .awaitingInput || $0.state == .completed }.map { "\($0.id)|\($0.state)" })
+    }
+
     static func opensAutomatically(_ states: [AIState]) -> Bool {
         states.contains { $0 == .awaitingInput || $0 == .completed }
     }

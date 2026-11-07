@@ -64,4 +64,21 @@ final class HUDStyleTests: XCTestCase {
         XCTAssertEqual(HUDStyle.dotSize, 10)
         XCTAssertEqual(HUDStyle.dotSpacing, 10)
     }
+
+    // Collapsing an automatically opened capsule must stick for that attention,
+    // yet a new red or unviewed-green row must open it again.
+    func testAttentionKeysIdentifyRowsThatAskToOpen() {
+        func item(_ id: String, _ state: AIState) -> AIObserverItem {
+            AIObserverItem(id: id, name: id, icon: id, isEnabled: true, state: state, description: "")
+        }
+        let first = HUDStyle.attentionKeys([item("a", .completed), item("b", .running), item("c", .idle)])
+        XCTAssertEqual(first, ["a|completed"])
+        let dismissed = first
+        // The same row, same state: still dismissed.
+        XCTAssertTrue(HUDStyle.attentionKeys([item("a", .completed)]).subtracting(dismissed).isEmpty)
+        // A different row, or the same row now needing the user: new, so it opens.
+        XCTAssertFalse(HUDStyle.attentionKeys([item("a", .completed), item("d", .completed)]).subtracting(dismissed).isEmpty)
+        XCTAssertFalse(HUDStyle.attentionKeys([item("a", .awaitingInput)]).subtracting(dismissed).isEmpty)
+        XCTAssertTrue(HUDStyle.attentionKeys([item("a", .running)]).isEmpty)
+    }
 }

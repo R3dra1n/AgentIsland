@@ -96,7 +96,29 @@ public final class FloatingHUDWindowController: NSObject {
             .store(in: &cancellables)
         
         syncVisibility()
+        startPreviewDemoIfRequested(state)
     }
+
+    #if AGENTISLAND_ISOLATED_PREVIEW
+    private var demoTimer: Timer?
+    /// Preview builds only, and only with AGENTISLAND_DEMO=1: walks the HUD
+    /// through running, done, needs-you and standby so the morph can be watched
+    /// (and recorded) without real assistants. Never compiled into a release.
+    private func startPreviewDemoIfRequested(_ state: AppState) {
+        guard ProcessInfo.processInfo.environment["AGENTISLAND_DEMO"] == "1" else { return }
+        let steps: [AIState] = [.running, .completed, .awaitingInput, .running, .idle]
+        var index = 0
+        demoTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                state.triggerMultiTest(state: steps[index % steps.count])
+                index += 1
+            }
+        }
+        demoTimer?.fire()
+    }
+    #else
+    private func startPreviewDemoIfRequested(_ state: AppState) {}
+    #endif
 
     public var hasCustomUserPosition = false
 

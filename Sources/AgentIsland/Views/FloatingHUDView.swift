@@ -9,6 +9,9 @@ public struct FloatingHUDView: View {
     /// Tapped open by the user while nothing needs them. Closes again on a second
     /// tap, or by itself once something does need them and then is dealt with.
     @State private var manuallyOpen = false
+    /// Attention the user has already collapsed the capsule on. The capsule
+    /// stays shut for these and opens again only for something new.
+    @State private var dismissedAttention: Set<String> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let onContentSizeChange: (CGSize) -> Void
 
@@ -84,7 +87,8 @@ public struct FloatingHUDView: View {
     public var body: some View {
         let items = itemsToShow
         let lights = dots(for: items)
-        let opensByItself = HUDStyle.opensAutomatically(items.map(\.state))
+        let attention = HUDStyle.attentionKeys(items)
+        let opensByItself = !attention.subtracting(dismissedAttention).isEmpty
         let isOpen = opensByItself || manuallyOpen
         let capsule = HUDStyle.capsuleSize(isOpen: isOpen, rows: items.count, dots: lights.count, maxOpenHeight: maximumOpenHeight)
         let openHeight = HUDStyle.openHeight(rows: items.count)
@@ -116,6 +120,7 @@ public struct FloatingHUDView: View {
                 }
             }
             .frame(width: HUDStyle.openWidth, height: rowsNeedScroll ? capsule.height : openHeight, alignment: .top)
+            .scaleEffect(isOpen ? 1 : 0.94, anchor: .top)
             .opacity(isOpen ? 1 : 0)
             .animation(reduceMotion ? nil : HUDStyle.rowsFade(opening: isOpen), value: isOpen)
             .allowsHitTesting(isOpen)
@@ -130,7 +135,14 @@ public struct FloatingHUDView: View {
         .clipShape(shape)
         .contentShape(shape)
         .onTapGesture {
-            if !opensByItself { manuallyOpen.toggle() }
+            if opensByItself {
+                // Close what opened by itself, and keep it closed for exactly
+                // this attention; a new red or green row opens it again.
+                dismissedAttention.formUnion(attention)
+                manuallyOpen = false
+            } else {
+                manuallyOpen.toggle()
+            }
         }
         #if AGENTISLAND_ISOLATED_PREVIEW
         .overlay(alignment: .bottom) {
@@ -146,6 +158,10 @@ public struct FloatingHUDView: View {
         .contextMenu { contextMenuItems() }
         .onChange(of: opensByItself) { _, now in
             if !now { manuallyOpen = false }
+        }
+        .onChange(of: attention) { _, now in
+            // Forget what is no longer there, so the next one is news again.
+            dismissedAttention.formIntersection(now)
         }
         .onChange(of: HUDStyle.windowSize(for: capsule), initial: true) { _, size in
             onContentSizeChange(size)
@@ -200,13 +216,10 @@ struct HUDDotView: View {
             .frame(width: HUDStyle.dotSize, height: HUDStyle.dotSize)
             .opacity(dim ? HUDStyle.pulseOpacity : 1)
             .scaleEffect(dim ? HUDStyle.pulseScale : 1)
-            .onChange(of: shouldPulse, initial: true) { _, pulse in
-                if pulse {
-                    withAnimation(HUDStyle.pulse) { dim = true }
-                } else {
-                    withAnimation(.easeOut(duration: 0.15)) { dim = false }
-                }
-            }
+            // Scoped to `dim` instead of `withAnimation`, so the endless pulse
+            // cannot attach itself to the capsule's size or the rows' layout.
+            .animation(dim ? HUDStyle.pulse : .easeOut(duration: 0.15), value: dim)
+            .onChange(of: shouldPulse, initial: true) { _, pulse in dim = pulse }
             .accessibilityLabel(state.title)
     }
 }
