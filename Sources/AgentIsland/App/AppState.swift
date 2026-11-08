@@ -127,6 +127,15 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     @Published var claudeAcknowledgedSessions: [String: Date] = [:] {
         didSet { Self.persistMarks(claudeAcknowledgedSessions, key: "claudeAcknowledgedSessions") }
     }
+    /// Every Codex conversation that currently has something to show; one row
+    /// each once there is more than one, as for Claude.
+    @Published var codexSessions: [CodexSessionSnapshot] = []
+    @Published var codexAcknowledgedSessions: [String: Date] = [:] {
+        didSet { Self.persistMarks(codexAcknowledgedSessions, key: "codexAcknowledgedSessions") }
+    }
+    /// When the island itself last took the user to a Codex conversation (see
+    /// `claudeOpenedByIslandAt`).
+    var codexOpenedByIslandAt: Date?
     private var antigravityViewedMonitor: AntigravityViewedMonitor?
     @Published var antigravityPreparedQuestions: [String: AntigravityPreparedQuestion] = [:]
     @Published var antigravityPrevalidationEnabled = false
@@ -182,6 +191,8 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     private var antigravitySessionLabels: [String: Int] = [:]
     static let claudeSessionPrefix = "claude-session:"
     private var claudeSessionLabels: [String: Int] = [:]
+    static let codexSessionPrefix = "codex-session:"
+    private var codexSessionLabels: [String: Int] = [:]
 
     static let overflowPrefix = "overflow:"
     /// Conversations beyond this many per assistant fold into one "+N" chip, so
@@ -249,6 +260,51 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         state == .completed && viewMarkCovers(acknowledgedAt: acknowledged[id], finishedAt: completedAt ?? lastActive)
     }
 
+    /// Codex's conversations as rows. A finished one is viewed when its own
+    /// mark covers it, or when the provider-level mark does: that one is the
+    /// only record there was before conversations had rows, and without it
+    /// every conversation finished earlier today would come back as "done".
+    /// Keeps the number a visible conversation already has, drops the numbers of
+    /// the ones that are gone, and gives each new one the smallest number free.
+    /// `visible` is oldest first.
+    static func assignCodexLabels(existing: [String: Int], visible: [String]) -> [String: Int] {
+        var labels = existing.filter { visible.contains($0.key) }
+        for id in visible where labels[id] == nil {
+            let taken = Set(labels.values)
+            labels[id] = (1...).first { !taken.contains($0) }
+        }
+        return labels
+    }
+
+    static func codexSessionIsViewed(_ session: CodexSessionSnapshot, acknowledged: [String: Date], providerAcknowledgedAt: Date?) -> Bool {
+        guard session.state == .completed else { return false }
+        let finished = session.completedAt ?? session.lastActiveDate
+        return viewMarkCovers(acknowledgedAt: acknowledged[session.id], finishedAt: finished)
+            || viewMarkCovers(acknowledgedAt: providerAcknowledgedAt, finishedAt: finished)
+    }
+
+    static func codexArrangement(_ provider: AIObserverItem, sessions: [CodexSessionSnapshot], labels: [String: Int],
+                                 acknowledged: [String: Date], providerAcknowledgedAt: Date?) -> SessionRows {
+        let all = sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session -> AIObserverItem in
+            let viewed = codexSessionIsViewed(session, acknowledged: acknowledged, providerAcknowledgedAt: providerAcknowledgedAt)
+            return AIObserverItem(id: codexSessionPrefix + session.id, name: "Codex · 会话 \(labels[session.id] ?? 0)",
+                icon: "codex", isEnabled: provider.isEnabled, state: viewed ? .idle : session.state,
+                description: viewed ? "待命中" : session.description, actionDetail: session.actionDetail)
+        }
+        // One conversation keeps the plain provider row, with everything the
+        // provider row does (answering requests included).
+        return arrangeSessionRows(provider: provider, all: all, soloKeepsProviderRow: true)
+    }
+
+    static func expandCodexSessions(_ providers: [AIObserverItem], sessions: [CodexSessionSnapshot], labels: [String: Int],
+                                    acknowledged: [String: Date], providerAcknowledgedAt: Date?) -> [AIObserverItem] {
+        providers.flatMap { provider in
+            guard provider.id == "codex", !sessions.isEmpty else { return [provider] }
+            return codexArrangement(provider, sessions: sessions, labels: labels, acknowledged: acknowledged,
+                                    providerAcknowledgedAt: providerAcknowledgedAt).rows
+        }
+    }
+
     static func claudeArrangement(_ provider: AIObserverItem, sessions: [ClaudeSessionSnapshot], labels: [String: Int],
                                   acknowledged: [String: Date]) -> SessionRows {
         let all = sessions.sorted { (labels[$0.id] ?? .max) < (labels[$1.id] ?? .max) }.map { session -> AIObserverItem in
@@ -304,6 +360,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         case "claude":
             return Self.claudeArrangement(provider, sessions: claudeSessions, labels: claudeSessionLabels,
                                           acknowledged: claudeAcknowledgedSessions).hidden
+        case "codex":
+            return Self.codexArrangement(provider, sessions: codexSessions, labels: codexSessionLabels,
+                                         acknowledged: codexAcknowledgedSessions,
+                                         providerAcknowledgedAt: lastAcknowledgedDates["codex"]).hidden
         case "antigravity":
             return Self.antigravityArrangement(provider, sessions: antigravityObserver.sessions,
                                                feedback: antigravitySessionFeedback, labels: antigravitySessionLabels,
@@ -325,10 +385,22 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         for session in claudeSessions where claudeSessionLabels[session.id] == nil {
             claudeSessionLabels[session.id] = claudeSessionLabels.count + 1
         }
-        let list = Self.expandClaudeSessions(
-            Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
-                                           labels: antigravitySessionLabels, acknowledged: antigravityAcknowledgedSessions),
-            sessions: claudeSessions, labels: claudeSessionLabels, acknowledged: claudeAcknowledgedSessions)
+        // Numbered only while a conversation has something to show, and the
+        // number is given back afterwards: a day of finished, long-viewed
+        // conversations would otherwise leave the two rows on screen as
+        // "会话 5" and "会话 6".
+        codexSessionLabels = Self.assignCodexLabels(
+            existing: codexSessionLabels,
+            visible: codexSessions.filter {
+                !Self.codexSessionIsViewed($0, acknowledged: codexAcknowledgedSessions, providerAcknowledgedAt: lastAcknowledgedDates["codex"])
+            }.map(\.id))
+        let list = Self.expandCodexSessions(
+            Self.expandClaudeSessions(
+                Self.expandAntigravitySessions(providers, sessions: sessions, feedback: antigravitySessionFeedback,
+                                               labels: antigravitySessionLabels, acknowledged: antigravityAcknowledgedSessions),
+                sessions: claudeSessions, labels: claudeSessionLabels, acknowledged: claudeAcknowledgedSessions),
+            sessions: codexSessions, labels: codexSessionLabels, acknowledged: codexAcknowledgedSessions,
+            providerAcknowledgedAt: lastAcknowledgedDates["codex"])
         switch hudDisplayMode {
         case .always:
             return list
@@ -346,6 +418,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         PreferenceMigration.runForCurrentApp()
         // Load settings
         self.claudeAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "claudeAcknowledgedSessions") as? [String: Date] ?? [:]
+        self.codexAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "codexAcknowledgedSessions") as? [String: Date] ?? [:]
         self.lastAcknowledgedDates = UserDefaults.standard.dictionary(forKey: "lastAcknowledgedDates") as? [String: Date] ?? [:]
         self.antigravityAcknowledgedSessions = UserDefaults.standard.dictionary(forKey: "antigravityAcknowledgedSessions") as? [String: Date] ?? [:]
         self.antigravityPrevalidationEnabled = UserDefaults.standard.bool(forKey: "antigravityPrevalidationEnabled") && UserDefaults.standard.bool(forKey: "antigravityLocalReplyConsent")
@@ -532,7 +605,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         // to its app must not acknowledge unrelated completed sessions.
         let codexInFront = finishedJustNow ? Self.isCodexDesktop(name: name, bundleId: bundleId)
                                            : isAppActive(name: name, bundleId: bundleId, for: "codex")
-        if codexNeedsAck && codexInFront {
+        // Not when the island itself brought Codex forward to open one
+        // conversation: that one is marked by `noteCodexConversationOpened`, and
+        // the others have not been looked at.
+        if codexNeedsAck && codexInFront && !Self.isOwnActivation(openedAt: codexOpenedByIslandAt, now: Date()) {
             acknowledgeCodex()
         }
         // Claude: switching to the app a finished conversation runs in is
@@ -550,7 +626,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// be launched first.
     nonisolated static let ownActivationWindow: TimeInterval = 6
 
-    nonisolated static func isOwnClaudeActivation(openedAt: Date?, now: Date) -> Bool {
+    nonisolated static func isOwnActivation(openedAt: Date?, now: Date) -> Bool {
         guard let openedAt else { return false }
         let elapsed = now.timeIntervalSince(openedAt)
         return elapsed >= 0 && elapsed <= ownActivationWindow
@@ -560,20 +636,60 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// at it. Not when the island did the switching to open one particular
     /// conversation: that one is marked by `noteClaudeConversationOpened`, and the
     /// others, which nobody has looked at, stay as they are.
-    func acknowledgeClaudeConversationsViewedByActivating(frontName: String, frontBundle: String, now: Date) {
-        guard !Self.isOwnClaudeActivation(openedAt: claudeOpenedByIslandAt, now: now) else { return }
+    func acknowledgeClaudeConversationsViewedByActivating(frontName: String, frontBundle: String, now: Date,
+                                                          focusedDesktopTranscript: () -> String? = { AppState.claudeDesktopFocusedTranscript() }) {
+        guard !Self.isOwnActivation(openedAt: claudeOpenedByIslandAt, now: now) else { return }
+        // The desktop app records which conversation the user last focused, so a
+        // conversation that finished behind the one on screen is not "seen".
+        // Read only when it matters: some finished desktop conversation waits.
+        let desktopFront = frontBundle.localizedCaseInsensitiveContains("anthropic") || frontName.localizedCaseInsensitiveContains("Claude")
+        let waiting = claudeSessions.contains { $0.state == .completed && ($0.entrypoint ?? "").localizedCaseInsensitiveContains("desktop") }
+        let focused = desktopFront && waiting ? focusedDesktopTranscript() : nil
         for id in Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
-                                                        frontName: frontName, frontBundle: frontBundle) {
+                                                        frontName: frontName, frontBundle: frontBundle,
+                                                        focusedDesktopTranscript: focused) {
             acknowledgeClaudeSession(id)
         }
     }
 
+    /// The conversation the desktop app has on screen: the one it recorded as
+    /// focused most recently, as the id its transcript carries. The app rewrites
+    /// a conversation's file when it is focused, so the newest few files are
+    /// enough; only the focus time and the two ids are read. Nil when nothing
+    /// can be told, in which case every finished conversation the app hosts
+    /// counts, as it did before this was known.
+    nonisolated static func claudeDesktopFocusedTranscript(root: URL = claudeDesktopSessionsRoot, newest: Int = 16) -> String? {
+        let fm = FileManager.default
+        var files: [(url: URL, modified: Date)] = []
+        for account in (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            for org in (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? [] {
+                for file in (try? fm.contentsOfDirectory(at: org, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+                where file.lastPathComponent.hasPrefix("local_") && file.pathExtension == "json" {
+                    let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                    files.append((file, modified))
+                }
+            }
+        }
+        var best: (id: String, focusedAt: Double)?
+        for file in files.sorted(by: { $0.modified > $1.modified }).prefix(newest) {
+            guard let data = try? Data(contentsOf: file.url),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["isArchived"] as? Bool != true,
+                  let cli = object["cliSessionId"] as? String, !cli.isEmpty,
+                  let focusedAt = (object["lastFocusedAt"] as? NSNumber)?.doubleValue, focusedAt > 0 else { continue }
+            if best == nil || focusedAt > best!.focusedAt { best = (cli, focusedAt) }
+        }
+        return best?.id
+    }
+
     /// Finished, not yet viewed Claude conversations that the activated app is
     /// the host of: the desktop app for conversations started there, a terminal
-    /// or editor for the rest. Claude's desktop app does not say which
-    /// conversation is on screen, so every finished one it hosts counts.
+    /// or editor for the rest. A terminal or editor does not say which
+    /// conversation is on screen, so every finished one it hosts counts; the
+    /// desktop app does (`focusedDesktopTranscript`), and then only that one does.
     nonisolated static func claudeSessionsViewedByActivating(sessions: [ClaudeSessionSnapshot], acknowledged: [String: Date],
-                                                             frontName: String, frontBundle: String) -> [String] {
+                                                             frontName: String, frontBundle: String,
+                                                             focusedDesktopTranscript: String? = nil) -> [String] {
         let desktopFront = frontBundle.localizedCaseInsensitiveContains("anthropic") || frontName.localizedCaseInsensitiveContains("Claude")
         let terminalFront = !desktopFront && (frontName.localizedCaseInsensitiveContains("Terminal") || frontName.localizedCaseInsensitiveContains("iTerm")
             || frontName.localizedCaseInsensitiveContains("Ghostty") || frontName.localizedCaseInsensitiveContains("Warp")
@@ -585,7 +701,11 @@ public final class AppState: ObservableObject, AIObserverDelegate {
             let finished = session.completedAt ?? session.lastActiveDate
             if let finished, (acknowledged[session.id] ?? .distantPast) >= finished { return nil }
             let onDesktop = (session.entrypoint ?? "").localizedCaseInsensitiveContains("desktop")
-            return onDesktop == desktopFront ? session.id : nil
+            guard onDesktop == desktopFront else { return nil }
+            // With the desktop app in front and the conversation on screen
+            // known, only that one is being looked at.
+            if desktopFront, let focused = focusedDesktopTranscript, session.id != focused { return nil }
+            return session.id
         }
     }
 

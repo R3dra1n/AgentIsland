@@ -7,6 +7,19 @@ struct CodexLiveActivity: Sendable {
     var startedAt: Date?
 }
 
+/// One Codex conversation as the HUD shows it, the same shape as Claude's: it
+/// exists while there is something to look at, and a finished one is judged
+/// "viewed" by when it finished.
+struct CodexSessionSnapshot: Identifiable, Equatable, Sendable {
+    let id: String
+    let state: AIState
+    let description: String
+    var actionDetail: String? = nil
+    /// When the turn started (running, waiting) or finished (the rest).
+    let lastActiveDate: Date?
+    var completedAt: Date? = nil
+}
+
 @MainActor
 public final class CodexObserver: AIObserverProtocol {
     public let id = "codex"
@@ -23,6 +36,9 @@ public final class CodexObserver: AIObserverProtocol {
     public private(set) var actionDetail: String?
     public private(set) var pendingRequests: [CodexPendingRequest] = []
     public private(set) var lastActiveDate: Date?
+    /// Every conversation that currently has something to show, not only the
+    /// newest one: two open Codex windows are two rows, as for Claude.
+    private(set) var sessions: [CodexSessionSnapshot] = []
     public weak var delegate: AIObserverDelegate?
     private var polling: Task<Void, Never>?
     private let scanner: LogScanner
@@ -95,6 +111,8 @@ public final class CodexObserver: AIObserverProtocol {
                     }
                 }
                 snapshot.codexRequests.sort { $0.id < $1.id }
+                snapshot.codexSessions = Self.sessionSnapshots(live: liveStates, fallback: fallbackActive, finished: finishedByTranscript,
+                                                               requests: snapshot.codexRequests, now: Date())
                 if !snapshot.codexRequests.isEmpty {
                     snapshot.state = .awaitingInput
                     snapshot.description = "Codex 正在等待操作"
@@ -209,10 +227,66 @@ public final class CodexObserver: AIObserverProtocol {
         }
     }
 
+    /// Finished conversations older than this are history, as for Claude.
+    nonisolated static let sessionWindow: TimeInterval = 86_400
+
+    /// What each conversation is doing, from the same three sources the
+    /// provider-level state is picked from, in the same order of trust: a
+    /// request someone has to answer, then what the desktop says about a
+    /// conversation it has open, then what the transcripts say.
+    nonisolated static func sessionSnapshots(live: [CodexLiveActivity], fallback: [String: AIState], finished: [CodexLiveActivity],
+                                             requests: [CodexPendingRequest], now: Date) -> [CodexSessionSnapshot] {
+        func newest(_ a: CodexLiveActivity, _ b: CodexLiveActivity) -> CodexLiveActivity {
+            (a.startedAt ?? .distantPast) >= (b.startedAt ?? .distantPast) ? a : b
+        }
+        let desktop = Dictionary(live.filter { $0.state != .unknown }.map { ($0.sessionID, $0) }, uniquingKeysWith: newest)
+        let transcripts = Dictionary(finished.map { ($0.sessionID, $0) }, uniquingKeysWith: newest)
+        let asking = Dictionary(grouping: requests, by: \.sessionID)
+        let ids = Set(desktop.keys).union(fallback.keys).union(transcripts.keys).union(asking.keys).filter { !$0.isEmpty }
+
+        func finishedSnapshot(_ id: String, _ state: AIState, at date: Date?) -> CodexSessionSnapshot? {
+            guard let date, now.timeIntervalSince(date) < sessionWindow else { return nil }
+            return .init(id: id, state: state, description: "Codex：\(state.title)", lastActiveDate: date,
+                         completedAt: state == .completed ? date : nil)
+        }
+        func activeSnapshot(_ id: String, _ state: AIState, at date: Date?) -> CodexSessionSnapshot {
+            if state == .awaitingInput {
+                return .init(id: id, state: state, description: "Codex 正在等待操作", actionDetail: asking[id]?.first?.context, lastActiveDate: date)
+            }
+            return .init(id: id, state: state, description: "Codex：\(state.title)", lastActiveDate: date)
+        }
+
+        let snapshots = ids.compactMap { id -> CodexSessionSnapshot? in
+            if asking[id] != nil { return activeSnapshot(id, .awaitingInput, at: desktop[id]?.startedAt) }
+            if let live = desktop[id] {
+                switch live.state {
+                case .running, .awaitingInput: return activeSnapshot(id, live.state, at: live.startedAt)
+                case .completed:
+                    // Dated by the finish, as the provider-level state is.
+                    let done = max(transcripts[id]?.startedAt ?? .distantPast, live.startedAt ?? .distantPast)
+                    return finishedSnapshot(id, .completed, at: done == .distantPast ? nil : done)
+                case .failed, .interrupted: return finishedSnapshot(id, live.state, at: live.startedAt)
+                default: return nil
+                }
+            }
+            if let state = fallback[id], state == .running || state == .awaitingInput { return activeSnapshot(id, state, at: nil) }
+            if let done = transcripts[id] { return finishedSnapshot(id, done.state, at: done.startedAt) }
+            return nil
+        }
+        // Oldest first, so the numbering the HUD gives them runs in the order
+        // the conversations began to need attention.
+        return snapshots.sorted {
+            let lhs = $0.lastActiveDate ?? .distantFuture, rhs = $1.lastActiveDate ?? .distantFuture
+            return lhs != rhs ? lhs < rhs : $0.id < $1.id
+        }
+    }
+
     private func publish(_ snapshot: ObserverSnapshot) {
         let activityChanged = lastActiveDate != snapshot.lastActiveDate
         lastActiveDate = snapshot.lastActiveDate
-        guard activityChanged || state != snapshot.state || statusDescription != snapshot.description || actionDetail != snapshot.actionDetail || pendingRequests != snapshot.codexRequests else { return }
+        let sessionsChanged = sessions != snapshot.codexSessions
+        sessions = snapshot.codexSessions
+        guard activityChanged || sessionsChanged || state != snapshot.state || statusDescription != snapshot.description || actionDetail != snapshot.actionDetail || pendingRequests != snapshot.codexRequests else { return }
         pendingRequests = snapshot.codexRequests
         state = snapshot.state
         statusDescription = snapshot.description

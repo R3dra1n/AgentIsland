@@ -121,6 +121,12 @@ extension AppState {
                     _ = AntigravityViewedMonitor.pressConversationLink(sessionID: id, pid: pid)
                 }
             }
+        } else if row.id.hasPrefix(Self.codexSessionPrefix) {
+            openCodex(sessionID: String(row.id.dropFirst(Self.codexSessionPrefix.count)))
+        } else if row.id == "codex" {
+            // The provider row stands for one conversation, or for none that
+            // needs anything; open that one when there is exactly one to open.
+            openCodex(sessionID: codexConversationForProviderRow())
         } else if row.id.hasPrefix(Self.claudeSessionPrefix) {
             openClaude(session: claudeSessions.first { $0.id == String(row.id.dropFirst(Self.claudeSessionPrefix.count)) })
         } else if row.id == "claude" || row.icon == "claude" {
@@ -140,6 +146,31 @@ extension AppState {
             if rank(a.state) != rank(b.state) { return rank(a.state) < rank(b.state) }
             return (a.lastActiveDate ?? .distantPast) > (b.lastActiveDate ?? .distantPast)
         }.first
+    }
+
+    /// The one Codex conversation the provider row can mean: the one asking for
+    /// an answer when it is the only one, else the only one with something to
+    /// look at. Several, or none, mean no particular conversation.
+    func codexConversationForProviderRow() -> String? {
+        if codexPendingRequests.count == 1 { return codexPendingRequests.first?.sessionID }
+        let wanted = codexSessions.filter {
+            !Self.codexSessionIsViewed($0, acknowledged: codexAcknowledgedSessions, providerAcknowledgedAt: lastAcknowledgedDates["codex"])
+        }
+        return wanted.count == 1 ? wanted.first?.id : nil
+    }
+
+    /// Taking the user to one Codex conversation is looking at that one, and only
+    /// that one (see `noteClaudeConversationOpened`).
+    func noteCodexConversationOpened(_ sessionID: String?) {
+        guard let sessionID else { return }
+        codexOpenedByIslandAt = Date()
+        acknowledgeCodexSession(sessionID)
+    }
+
+    private func openCodex(sessionID: String?) {
+        openLogger.notice("codex open requested: session=\(sessionID?.prefix(8).description ?? "none", privacy: .public)")
+        noteCodexConversationOpened(sessionID)
+        CodexActionController.focus(sessionID)
     }
 
     /// The conversation the provider-level row opens. Without a hook, a finished
@@ -312,6 +343,21 @@ extension AppState {
         recalculateAggregatedState()
     }
 
+    /// Acknowledges one finished conversation. The provider-level completion is
+    /// only cleared once no conversation is left that still needs attention.
+    func acknowledgeCodexSession(_ id: String) {
+        guard let session = codexSessions.first(where: { $0.id == id }), session.state == .completed,
+              let completion = session.completedAt ?? session.lastActiveDate else { return }
+        codexAcknowledgedSessions[id] = max(Date(), completion)
+        let stillActive = codexSessions.contains { session in
+            if session.state == .running || session.state == .awaitingInput { return true }
+            guard session.state == .completed else { return false }
+            return !Self.codexSessionIsViewed(session, acknowledged: codexAcknowledgedSessions,
+                                              providerAcknowledgedAt: lastAcknowledgedDates["codex"])
+        }
+        if !stillActive { acknowledgeCodex() }
+    }
+
     public func acknowledgeAntigravity() {
         if testModeActive { stopTest(); return }
         lastAcknowledgedDates["antigravity"] = Date()
@@ -341,6 +387,8 @@ extension AppState {
             acknowledgeAntigravitySession(String(row.id.dropFirst(Self.antigravitySessionPrefix.count)))
         } else if row.id.hasPrefix(Self.claudeSessionPrefix) {
             acknowledgeClaudeSession(String(row.id.dropFirst(Self.claudeSessionPrefix.count)))
+        } else if row.id.hasPrefix(Self.codexSessionPrefix) {
+            acknowledgeCodexSession(String(row.id.dropFirst(Self.codexSessionPrefix.count)))
         }
     }
 

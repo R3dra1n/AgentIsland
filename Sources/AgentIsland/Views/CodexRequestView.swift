@@ -2,9 +2,17 @@ import SwiftUI
 
 struct CodexRequestView: View {
     @ObservedObject var appState: AppState
+    /// Only this conversation's requests, for its own row; every request for the
+    /// provider row.
+    var sessionID: String? = nil
     var onDismiss: (() -> Void)?
     @State private var answers: [String: String] = [:]
-    
+
+    private var shownRequests: [CodexPendingRequest] {
+        guard let sessionID else { return appState.codexPendingRequests }
+        return appState.codexPendingRequests.filter { $0.sessionID == sessionID }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -20,13 +28,13 @@ struct CodexRequestView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if appState.codexPendingRequests.isEmpty {
+                    if shownRequests.isEmpty {
                         Text("当前没有待处理请求")
                             .font(.system(size: 11))
                             .foregroundColor(.secondary)
                     }
                     
-                    ForEach(appState.codexPendingRequests) { request in
+                    ForEach(shownRequests) { request in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text(String(request.sessionID.prefix(12)))
@@ -124,7 +132,7 @@ struct CodexRequestView: View {
                         }
                         .disabled(appState.codexActionInFlight)
                         
-                        if request.id != appState.codexPendingRequests.last?.id {
+                        if request.id != shownRequests.last?.id {
                             Divider()
                         }
                     }

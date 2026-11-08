@@ -37,6 +37,7 @@ extension AppState {
                 let requests = codex.pendingRequests
                 if requests != codexPendingRequests || state != codexState { codexActionFeedback = nil }
                 codexPendingRequests = requests
+                codexSessions = codex.sessions
             }
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &codexState, providerDesc: &codexDescription, providerNeedsAck: &codexNeedsAck, providerActionDetail: &codexActionDetail)
         } else if observer.id == "antigravity" {

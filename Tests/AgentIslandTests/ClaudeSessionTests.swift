@@ -444,7 +444,8 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
 
         state.noteClaudeConversationOpened(a)
         // The app comes forward and says so a moment later.
-        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
+                                                               focusedDesktopTranscript: { nil })
 
         XCTAssertTrue(viewed(state, "a"), "the conversation that was opened has been looked at")
         XCTAssertFalse(viewed(state, "b"), "the other one has not")
@@ -466,14 +467,16 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
         let running = session("run", .running), done = session("done", .completed)
         let state = makeState([running, done])
         state.noteClaudeConversationOpened(running)
-        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
+                                                               focusedDesktopTranscript: { nil })
         XCTAssertFalse(viewed(state, "done"), "going to look at one conversation is not looking at the finished one")
     }
 
     func testTheUserSwitchingToTheAppStillViewsWhatItHosts() {
         // Nothing was opened by the island, so this is the user's own doing.
         let state = makeState([session("a", .completed), session("b", .completed)])
-        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
+                                                               focusedDesktopTranscript: { nil })
         XCTAssertTrue(viewed(state, "a") && viewed(state, "b"))
     }
 
@@ -484,11 +487,12 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
         let opened = state.claudeOpenedByIslandAt!
         // Well after the island's own switch, coming back to the app is the user's.
         state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle,
-                                                               now: opened.addingTimeInterval(AppState.ownActivationWindow + 1))
+                                                               now: opened.addingTimeInterval(AppState.ownActivationWindow + 1),
+                                                               focusedDesktopTranscript: { nil })
         XCTAssertTrue(viewed(state, "b"))
-        XCTAssertFalse(AppState.isOwnClaudeActivation(openedAt: nil, now: Date()))
-        XCTAssertTrue(AppState.isOwnClaudeActivation(openedAt: opened, now: opened.addingTimeInterval(1)))
-        XCTAssertFalse(AppState.isOwnClaudeActivation(openedAt: opened, now: opened.addingTimeInterval(AppState.ownActivationWindow + 1)))
+        XCTAssertFalse(AppState.isOwnActivation(openedAt: nil, now: Date()))
+        XCTAssertTrue(AppState.isOwnActivation(openedAt: opened, now: opened.addingTimeInterval(1)))
+        XCTAssertFalse(AppState.isOwnActivation(openedAt: opened, now: opened.addingTimeInterval(AppState.ownActivationWindow + 1)))
     }
 
     func testAFinishedConversationThatLeftTheLiveListIsClearedWhenOpened() {
@@ -500,5 +504,112 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
         state.noteClaudeConversationOpened(session("gone", .completed))
         XCTAssertEqual(state.claudeState, .idle)
         XCTAssertFalse(state.claudeNeedsAck)
+    }
+}
+
+/// The conversation that finishes behind the one the user is looking at is not
+/// "seen" just because the app is in front. The desktop app records which
+/// conversation was focused last, which is the one on screen.
+final class ClaudeBackgroundCompletionTests: XCTestCase {
+    private let desktop = (name: "Claude", bundle: "com.anthropic.claudefordesktop")
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("claude-focus-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("acct/org"), withIntermediateDirectories: true)
+    }
+    override func tearDown() { try? FileManager.default.removeItem(at: root) }
+
+    private func writeSession(_ name: String, cli: String, focusedAt: Double?, archived: Bool = false, age: TimeInterval = 0) throws {
+        var object: [String: Any] = ["sessionId": name, "cliSessionId": cli, "isArchived": archived, "lastActivityAt": 1]
+        if let focusedAt { object["lastFocusedAt"] = focusedAt }
+        let url = root.appendingPathComponent("acct/org/\(name).json")
+        try JSONSerialization.data(withJSONObject: object).write(to: url)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-age)], ofItemAtPath: url.path)
+    }
+
+    func testTheFocusedConversationIsTheMostRecentlyFocusedOne() throws {
+        try writeSession("local_a", cli: "A", focusedAt: 1_000)
+        try writeSession("local_b", cli: "B", focusedAt: 5_000)
+        try writeSession("local_c", cli: "C", focusedAt: 3_000)
+        XCTAssertEqual(AppState.claudeDesktopFocusedTranscript(root: root), "B")
+    }
+
+    func testArchivedAndNeverFocusedConversationsDoNotCount() throws {
+        try writeSession("local_a", cli: "A", focusedAt: 1_000)
+        try writeSession("local_gone", cli: "GONE", focusedAt: 9_000, archived: true)
+        try writeSession("local_new", cli: "NEW", focusedAt: nil)
+        XCTAssertEqual(AppState.claudeDesktopFocusedTranscript(root: root), "A")
+    }
+
+    func testNothingToGoOnGivesNoAnswer() throws {
+        XCTAssertNil(AppState.claudeDesktopFocusedTranscript(root: root))
+        XCTAssertNil(AppState.claudeDesktopFocusedTranscript(root: root.appendingPathComponent("missing")))
+    }
+
+    func testOnlyTheNewestFilesAreRead() throws {
+        // Bounded work however many conversations the app has accumulated.
+        try writeSession("local_old", cli: "OLD", focusedAt: 99_000, age: 3_600)
+        try writeSession("local_new", cli: "NEW", focusedAt: 1_000)
+        XCTAssertEqual(AppState.claudeDesktopFocusedTranscript(root: root, newest: 1), "NEW")
+    }
+
+    private func finished(_ id: String, entry: String = "claude-desktop") -> ClaudeSessionSnapshot {
+        let t = Date().addingTimeInterval(-30)
+        return ClaudeSessionSnapshot(id: id, state: .completed, description: "d", actionDetail: nil, lastActiveDate: t,
+                                     completedAt: t, entrypoint: entry)
+    }
+
+    func testOnlyTheOneOnScreenIsViewedWhenAnotherFinishesBehindIt() {
+        let sessions = [finished("on-screen"), finished("behind")]
+        let viewed = AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: desktop.name,
+                                                               frontBundle: desktop.bundle, focusedDesktopTranscript: "on-screen")
+        XCTAssertEqual(viewed, ["on-screen"])
+    }
+
+    func testWithoutAnyFocusRecordEveryFinishedOneCountsAsBefore() {
+        let sessions = [finished("a"), finished("b")]
+        let viewed = AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: desktop.name,
+                                                               frontBundle: desktop.bundle, focusedDesktopTranscript: nil)
+        XCTAssertEqual(Set(viewed), ["a", "b"])
+    }
+
+    func testTheFocusRecordSaysNothingAboutTerminals() {
+        // A terminal does not report which conversation is on screen.
+        let sessions = [finished("t1", entry: "cli"), finished("t2", entry: "cli")]
+        let viewed = AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: "Terminal",
+                                                               frontBundle: "com.apple.Terminal", focusedDesktopTranscript: "t1")
+        XCTAssertEqual(Set(viewed), ["t1", "t2"])
+    }
+
+    @MainActor func testAConversationFinishingBehindTheOneOnScreenStaysGreen() {
+        _ = NSApplication.shared
+        let state = AppState()
+        [state.codexObserver as any AIObserverProtocol, state.antigravityObserver, state.claudeObserver,
+         state.cursorObserver, state.windsurfObserver, state.traeObserver].forEach { $0.stopObserving() }
+        state.lastAcknowledgedDates = [:]
+        state.claudeAcknowledgedSessions = [:]
+        state.claudeSessions = [finished("on-screen"), finished("behind")]
+        state.claudeState = .completed
+        state.claudeNeedsAck = true
+
+        // The user is in the app, on one conversation, when the other finishes.
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
+                                                               focusedDesktopTranscript: { "on-screen" })
+        XCTAssertNotNil(state.claudeAcknowledgedSessions["on-screen"], "the one being looked at is seen")
+        XCTAssertNil(state.claudeAcknowledgedSessions["behind"], "the one that finished behind it is not")
+        XCTAssertEqual(state.claudeState, .completed, "so there is still a done to show")
+    }
+
+    @MainActor func testTheFocusRecordIsNotReadWhenNothingFinishedIsWaiting() {
+        _ = NSApplication.shared
+        let state = AppState()
+        [state.codexObserver as any AIObserverProtocol, state.antigravityObserver, state.claudeObserver,
+         state.cursorObserver, state.windsurfObserver, state.traeObserver].forEach { $0.stopObserving() }
+        state.claudeSessions = []
+        var reads = 0
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
+                                                               focusedDesktopTranscript: { reads += 1; return nil })
+        XCTAssertEqual(reads, 0)
     }
 }

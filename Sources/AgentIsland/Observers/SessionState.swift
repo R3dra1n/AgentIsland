@@ -483,6 +483,7 @@ struct ObserverSnapshot: Sendable {
     var antigravityPendingIdentity: AntigravityPendingIdentity?
     var antigravitySessions: [AntigravitySessionSnapshot] = []
     var claudeSessions: [ClaudeSessionSnapshot] = []
+    var codexSessions: [CodexSessionSnapshot] = []
 }
 
 /// Keeps incomplete UTF-8/JSON records across reads. All offsets belong to this reader.

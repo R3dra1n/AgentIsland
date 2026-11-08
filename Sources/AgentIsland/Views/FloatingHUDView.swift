@@ -44,7 +44,8 @@ public struct FloatingHUDView: View {
     @ViewBuilder
     private func sessionSegment(_ item: AIObserverItem) -> some View {
         let claudeSessionRow = item.id.hasPrefix(AppState.claudeSessionPrefix)
-        let provider = item.icon == "antigravity" ? "antigravity" : (claudeSessionRow ? "claude" : item.id)
+        let codexSessionRow = item.id.hasPrefix(AppState.codexSessionPrefix)
+        let provider = item.icon == "antigravity" ? "antigravity" : (claudeSessionRow ? "claude" : (codexSessionRow ? "codex" : item.id))
         let sessionRow = item.id.hasPrefix(AppState.antigravitySessionPrefix)
         AISegmentView(appState: appState, item: item,
             // A blind keystroke cannot be aimed at the right Claude Code
@@ -57,6 +58,9 @@ public struct FloatingHUDView: View {
             onAcknowledge: {
                 if provider == "claude", claudeSessionRow {
                     appState.acknowledgeClaudeSession(String(item.id.dropFirst(AppState.claudeSessionPrefix.count)))
+                }
+                else if provider == "codex", codexSessionRow {
+                    appState.acknowledgeCodexSession(String(item.id.dropFirst(AppState.codexSessionPrefix.count)))
                 }
                 else if provider == "codex" { appState.acknowledgeCodex() }
                 else if provider == "antigravity", sessionRow {
@@ -392,6 +396,12 @@ public struct AISegmentView: View {
 
     private var isAntigravity: Bool { item.icon == "antigravity" || item.id == "antigravity" }
     private var isClaudeSession: Bool { item.id.hasPrefix(AppState.claudeSessionPrefix) }
+    /// Codex's own row, or one conversation's row of it. Both are answered the
+    /// same way; a conversation's row lists only that conversation's requests.
+    private var isCodex: Bool { item.id == "codex" || item.id.hasPrefix(AppState.codexSessionPrefix) }
+    private var codexRowSessionID: String? {
+        item.id.hasPrefix(AppState.codexSessionPrefix) ? String(item.id.dropFirst(AppState.codexSessionPrefix.count)) : nil
+    }
     /// Any Claude row, per conversation or folded into one. Outside the demo
     /// the island can only open Claude for these, never answer on its behalf.
     private var isClaude: Bool { isClaudeSession || item.id == "claude" || item.icon == "claude" }
@@ -428,8 +438,8 @@ public struct AISegmentView: View {
 
     @ViewBuilder
     private func detailPopover(_ detail: String) -> some View {
-        if item.id == "codex" {
-            CodexRequestView(appState: appState, onDismiss: { showDetail = false })
+        if isCodex {
+            CodexRequestView(appState: appState, sessionID: codexRowSessionID, onDismiss: { showDetail = false })
         } else if item.id.hasPrefix(AppState.antigravitySessionPrefix) {
             let shown = presentedDetail ?? detail
             VStack(alignment: .leading, spacing: 5) {
@@ -482,7 +492,7 @@ public struct AISegmentView: View {
     /// the state, or the reply feedback that replaces it.
     private var secondaryText: String {
         if let feedback = rowFeedback { return feedback }
-        if item.id == "codex", item.state == .awaitingInput, let feedback = appState.codexActionFeedback, !feedback.isEmpty {
+        if isCodex, item.state == .awaitingInput, let feedback = appState.codexActionFeedback, !feedback.isEmpty {
             return feedback
         }
         if appState.hudDetailMode == .full {
@@ -492,17 +502,17 @@ public struct AISegmentView: View {
             return item.description
         }
         if item.state == .idle || item.state == .unknown { return item.description }
-        return item.id == "codex" ? (appState.codexActionFeedback ?? item.state.title) : item.state.title
+        return isCodex ? (appState.codexActionFeedback ?? item.state.title) : item.state.title
     }
 
     private var secondaryHelp: String {
         if let detail = item.actionDetail, item.state == .awaitingInput { return detail }
-        if item.id == "codex" { return appState.codexActionFeedback ?? item.description }
+        if isCodex { return appState.codexActionFeedback ?? item.description }
         return item.description
     }
 
     private var approveTitle: String {
-        if item.id == "codex" { return "处理请求" }
+        if isCodex { return "处理请求" }
         return (isAntigravity || opensHostToHandle || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"
     }
 
@@ -568,10 +578,10 @@ public struct AISegmentView: View {
                         .buttonStyle(HUDPillButtonStyle(primary: false))
                 }
 
-                Button(approveTitle) { if item.id == "codex" { toggleDetail() } else { onApprove?() } }
+                Button(approveTitle) { if isCodex { toggleDetail() } else { onApprove?() } }
                     .buttonStyle(HUDPillButtonStyle(primary: true))
             }
-            .disabled(item.id == "codex" && appState.codexActionInFlight)
+            .disabled(isCodex && appState.codexActionInFlight)
         } else if item.state == .completed, onAcknowledge != nil {
             HStack(spacing: 6) {
                 Button(isAntigravity ? "已查看" : "待命") { onAcknowledge?() }
