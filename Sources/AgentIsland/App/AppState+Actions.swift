@@ -126,7 +126,7 @@ extension AppState {
         } else if row.id == "claude" || row.icon == "claude" {
             // The provider-level row (one conversation, or the folded icon)
             // has no session id; use the one that most needs attention.
-            openClaude(session: Self.mostRelevantClaudeSession(claudeSessions))
+            openClaude(session: Self.claudeSessionToOpen(live: claudeSessions, remembered: lastKnownClaudeSession))
         } else {
             let antigravity = row.icon == "antigravity" || row.id == "antigravity"
             focusApp(for: antigravity ? "antigravity" : row.id)
@@ -142,7 +142,23 @@ extension AppState {
         }.first
     }
 
-    public func openClaudeConversation() { openClaude(session: Self.mostRelevantClaudeSession(claudeSessions)) }
+    /// The conversation the provider-level row opens. Without a hook, a finished
+    /// conversation drops out of the live list two minutes after its last write
+    /// while the provider's "done" stays until it is viewed. With nothing live
+    /// the row used to know neither the conversation nor where it runs, took
+    /// that to mean "a terminal", and brought one forward: for a desktop-app
+    /// conversation, nothing visible happened. The conversation it was last
+    /// about is remembered, and stands in. It is no longer waiting on anything
+    /// (a stale question would send the app to a question that was answered).
+    nonisolated static func claudeSessionToOpen(live: [ClaudeSessionSnapshot], remembered: ClaudeSessionSnapshot?) -> ClaudeSessionSnapshot? {
+        if let current = mostRelevantClaudeSession(live) { return current }
+        guard let remembered else { return nil }
+        return ClaudeSessionSnapshot(id: remembered.id, state: .completed, description: remembered.description,
+                                     actionDetail: nil, lastActiveDate: remembered.lastActiveDate,
+                                     completedAt: remembered.completedAt, entrypoint: remembered.entrypoint)
+    }
+
+    public func openClaudeConversation() { openClaude(session: Self.claudeSessionToOpen(live: claudeSessions, remembered: lastKnownClaudeSession)) }
 
     private func openClaude(session: ClaudeSessionSnapshot?) {
         let target = Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle)

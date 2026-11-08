@@ -51,6 +51,7 @@ extension AppState {
             AntigravityActionController.refreshPrevalidation(state: self)
         } else if observer.id == "claude" {
             claudeSessions = (observer as? ClaudeObserver)?.sessions ?? []
+            if let leading = Self.mostRelevantClaudeSession(claudeSessions) { lastKnownClaudeSession = leading }
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &claudeState, providerDesc: &claudeDescription, providerNeedsAck: &claudeNeedsAck, providerActionDetail: &claudeActionDetail)
         } else if observer.id == "cursor" {
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &cursorState, providerDesc: &cursorDescription, providerNeedsAck: &cursorNeedsAck, providerActionDetail: nil) // Cursor doesn't have action detail yet

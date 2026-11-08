@@ -115,6 +115,11 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// Every Claude Code conversation that currently has something to show. The
     /// HUD gets one row per conversation once there is more than one.
     @Published var claudeSessions: [ClaudeSessionSnapshot] = []
+    /// The conversation the provider-level Claude state was last about. A
+    /// finished conversation leaves `claudeSessions` after a couple of minutes,
+    /// but its "done" stays on screen until it is seen, and the row still has
+    /// to know where to go when it is clicked.
+    var lastKnownClaudeSession: ClaudeSessionSnapshot?
     @Published var claudeAcknowledgedSessions: [String: Date] = [:] {
         didSet { Self.persistMarks(claudeAcknowledgedSessions, key: "claudeAcknowledgedSessions") }
     }

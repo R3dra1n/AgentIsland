@@ -309,3 +309,98 @@ final class ClaudeSessionRowTests: XCTestCase {
         XCTAssertEqual(rows.map(\.state), [.running, .running])
     }
 }
+
+/// The reported defect, end to end: a conversation finishes, drops out of the
+/// live list two minutes later while its "done" is still on screen, and
+/// clicking that row then had nothing to go on, assumed a terminal, and
+/// brought one forward. For a desktop-app conversation nothing visible happened.
+final class ClaudeFinishedRowStillOpensTests: XCTestCase {
+    private var root: URL!
+
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent("claude-open-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("projects/proj"), withIntermediateDirectories: true)
+    }
+
+    override func tearDown() { try? FileManager.default.removeItem(at: root) }
+
+    @MainActor private func eventually(_ seconds: TimeInterval = 8, _ condition: () -> Bool) async -> Bool {
+        let end = Date().addingTimeInterval(seconds)
+        while Date() < end {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return condition()
+    }
+
+    @MainActor func testRowStillKnowsWhereToGoAfterTheConversationLeavesTheLiveList() async throws {
+        _ = NSApplication.shared
+        let state = AppState()
+        // The app's own observers read the real home directory; only the one
+        // under test may report here.
+        [state.codexObserver as any AIObserverProtocol, state.antigravityObserver, state.claudeObserver,
+         state.cursorObserver, state.windsurfObserver, state.traeObserver].forEach { $0.stopObserving() }
+        state.lastAcknowledgedDates = [:]
+
+        func line(_ object: [String: Any]) -> String {
+            String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+        }
+        let transcript = root.appendingPathComponent("projects/proj/finished-session.jsonl")
+        let lines = [
+            line(["type": "user", "entrypoint": "claude-desktop", "message": ["role": "user", "content": "hi"]]),
+            line(["type": "assistant", "entrypoint": "claude-desktop",
+                  "message": ["role": "assistant", "content": [["type": "text", "text": "done"]]]]),
+        ]
+        try (lines.joined(separator: "\n") + "\n").write(to: transcript, atomically: true, encoding: .utf8)
+        func age(_ seconds: TimeInterval) throws {
+            try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-seconds)], ofItemAtPath: transcript.path)
+        }
+        // Finished a few seconds ago, with no hook: shown as done.
+        try age(10)
+
+        let observer = ClaudeObserver(root: root, hookURL: root.appendingPathComponent("no-hook.jsonl"))
+        observer.delegate = state
+        observer.startObserving()
+        defer { observer.stopObserving() }
+
+        let appeared = await eventually { state.claudeState == .completed && !state.claudeSessions.isEmpty }
+        XCTAssertTrue(appeared, "the finished conversation should show as done")
+        XCTAssertEqual(state.lastKnownClaudeSession?.entrypoint, "claude-desktop")
+
+        // Two minutes on, the conversation is no longer live, but "done" stays
+        // on screen until it is viewed.
+        try age(ClaudeSessionEvaluator.recentWindow + 60)
+        let gone = await eventually { state.claudeSessions.isEmpty }
+        XCTAssertTrue(gone, "an old hook-less conversation leaves the live list")
+        XCTAssertEqual(state.claudeState, .completed, "the done mark outlives the live list")
+
+        // Which is exactly when the row used to know nothing about where to go.
+        XCTAssertNil(AppState.mostRelevantClaudeSession(state.claudeSessions))
+        let target = AppState.claudeSessionToOpen(live: state.claudeSessions, remembered: state.lastKnownClaudeSession)
+        XCTAssertEqual(target?.id, "finished-session")
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: target?.entrypoint, state: target?.state ?? .idle), .desktopApp)
+    }
+
+    private func snap(_ id: String, _ state: AIState, _ entry: String?) -> ClaudeSessionSnapshot {
+        ClaudeSessionSnapshot(id: id, state: state, description: "d", actionDetail: "old question",
+                              lastActiveDate: Date(timeIntervalSince1970: 1000), entrypoint: entry)
+    }
+
+    func testLiveConversationsWinOverTheRememberedOne() {
+        let picked = AppState.claudeSessionToOpen(live: [snap("live", .running, "cli")], remembered: snap("old", .completed, "claude-desktop"))
+        XCTAssertEqual(picked?.id, "live")
+    }
+
+    func testRememberedConversationNoLongerClaimsToBeWaiting() {
+        // A question that was answered since must not send the app to
+        // "needs input" for a conversation that is no longer asking.
+        let picked = AppState.claudeSessionToOpen(live: [], remembered: snap("asked", .awaitingInput, "claude-desktop"))
+        XCTAssertEqual(picked?.state, .completed)
+        XCTAssertNil(picked?.actionDetail)
+        XCTAssertEqual(AppState.claudeOpenTarget(entrypoint: picked?.entrypoint, state: picked?.state ?? .idle), .desktopApp)
+    }
+
+    func testNothingLiveAndNothingRememberedStillHasNoAnswer() {
+        XCTAssertNil(AppState.claudeSessionToOpen(live: [], remembered: nil))
+    }
+}
