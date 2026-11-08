@@ -447,6 +447,25 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         didSet { Self.persistMarks(lastAcknowledgedDates, key: "lastAcknowledgedDates") }
     }
 
+    /// How long a result that arrives while the user is already in that app
+    /// stays visible before it counts as seen. Marking it at once (1.3.7) meant
+    /// the island never showed "done" at all for someone watching the task.
+    nonisolated static let completionShownFor: TimeInterval = 4
+    private var seenWhileInFrontTask: Task<Void, Never>?
+    var lastLoggedObserverState: [String: AIState] = [:]
+
+    /// Let a fresh result show for a moment, then count it as seen if the user
+    /// is still in that app. Leaving in between keeps it pending.
+    func scheduleSeenWhileInFrontCheck() {
+        guard seenWhileInFrontTask == nil else { return }
+        seenWhileInFrontTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.completionShownFor * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.seenWhileInFrontTask = nil
+            self.checkFrontmostAppAndAutoAcknowledge(finishedJustNow: true)
+        }
+    }
+
     /// Saves a "viewed" mark table, dropping the oldest marks so it cannot grow
     /// without bound (one entry per conversation ever seen).
     nonisolated static func persistMarks(_ marks: [String: Date], key: String, limit: Int = 300) {

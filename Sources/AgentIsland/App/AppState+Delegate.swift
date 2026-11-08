@@ -61,9 +61,17 @@ extension AppState {
         }
         recalculateAggregatedState()
         // A result that lands while the user is already in that assistant's app
-        // has been seen; no app-switch event will ever say so.
+        // has been seen; no app-switch event will ever say so. It is shown for a
+        // few seconds first, so that someone watching still gets the "done".
         if state == .completed, observer.id == "codex" || observer.id == "claude" {
-            checkFrontmostAppAndAutoAcknowledge(finishedJustNow: true)
+            scheduleSeenWhileInFrontCheck()
+        }
+        // One line per change of what an assistant reports, so a "done" that
+        // never showed (or showed when it should not) can be traced afterwards.
+        if lastLoggedObserverState[observer.id] != state {
+            lastLoggedObserverState[observer.id] = state
+            let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-"
+            delegateLogger.notice("\(observer.id, privacy: .public) reports \(state.rawValue, privacy: .public): lastActive=\(activeDate.timeIntervalSince1970, privacy: .public) lastAck=\(lastAck.timeIntervalSince1970, privacy: .public) viewed=\(isAlreadyAcknowledged, privacy: .public) island=\(self.aggregatedState.rawValue, privacy: .public) front=\(front, privacy: .public)")
         }
     }
 

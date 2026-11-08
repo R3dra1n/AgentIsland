@@ -206,4 +206,16 @@ final class SessionRowArrangementTests: XCTestCase {
         XCTAssertFalse(AppState.isCodexDesktop(name: "iTerm2", bundleId: "com.googlecode.iterm2"))
         XCTAssertFalse(AppState.isCodexDesktop(name: "Google Chrome", bundleId: "com.google.Chrome"))
     }
+    @MainActor
+    func testResultThatArrivesInFrontStaysVisibleForAMoment() {
+        _ = NSApplication.shared
+        let state = AppState()
+        state.codexNeedsAck = true
+        state.codexState = .completed
+        state.scheduleSeenWhileInFrontCheck()
+        // Not marked synchronously: the island has to get to show "done".
+        XCTAssertEqual(state.codexState, .completed)
+        XCTAssertTrue(state.codexNeedsAck)
+        XCTAssertGreaterThan(AppState.completionShownFor, 1)
+    }
 }
