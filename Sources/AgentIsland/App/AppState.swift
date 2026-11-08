@@ -482,7 +482,19 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         }
     }
 
-    public func checkFrontmostAppAndAutoAcknowledge(app: NSRunningApplication? = nil) {
+    /// Codex's own desktop app. A terminal also counts when the user *switches*
+    /// to it, but a task finishing while a terminal happens to be in front says
+    /// nothing about the user looking at Codex.
+    nonisolated static func isCodexDesktop(name: String, bundleId: String) -> Bool {
+        name.localizedCaseInsensitiveContains("Codex") || name.localizedCaseInsensitiveContains("ChatGPT")
+            || bundleId.localizedCaseInsensitiveContains("openai") || bundleId.localizedCaseInsensitiveContains("codex")
+    }
+
+    /// `finishedJustNow` is for a result that arrives while the user is already
+    /// in some app: no activation event follows, so without this check a task
+    /// that finished in front of the user stayed "done" until they switched
+    /// away and back.
+    public func checkFrontmostAppAndAutoAcknowledge(app: NSRunningApplication? = nil, finishedJustNow: Bool = false) {
         let front = app ?? NSWorkspace.shared.frontmostApplication
         guard let front = front else { return }
         let name = front.localizedName ?? ""
@@ -490,7 +502,9 @@ public final class AppState: ObservableObject, AIObserverDelegate {
 
         // Antigravity needs per-conversation confirmation; merely switching
         // to its app must not acknowledge unrelated completed sessions.
-        if codexNeedsAck && isAppActive(name: name, bundleId: bundleId, for: "codex") {
+        let codexInFront = finishedJustNow ? Self.isCodexDesktop(name: name, bundleId: bundleId)
+                                           : isAppActive(name: name, bundleId: bundleId, for: "codex")
+        if codexNeedsAck && codexInFront {
             acknowledgeCodex()
         }
         // Claude: switching to the app a finished conversation runs in is
@@ -501,7 +515,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
                                                         frontName: name, frontBundle: bundleId) {
             acknowledgeClaudeSession(id)
         }
-        if claudeSessions.isEmpty, claudeNeedsAck, isAppActive(name: name, bundleId: bundleId, for: "claude") {
+        if claudeSessions.isEmpty, claudeNeedsAck, !finishedJustNow, isAppActive(name: name, bundleId: bundleId, for: "claude") {
             acknowledgeClaude()
         }
     }

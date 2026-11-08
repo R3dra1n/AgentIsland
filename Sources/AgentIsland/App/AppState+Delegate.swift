@@ -60,6 +60,11 @@ extension AppState {
             updateProviderState(state: state, description: description, actionDetail: actionDetail, isAlreadyAcknowledged: isAlreadyAcknowledged, providerState: &traeState, providerDesc: &traeDescription, providerNeedsAck: &traeNeedsAck, providerActionDetail: nil)
         }
         recalculateAggregatedState()
+        // A result that lands while the user is already in that assistant's app
+        // has been seen; no app-switch event will ever say so.
+        if state == .completed, observer.id == "codex" || observer.id == "claude" {
+            checkFrontmostAppAndAutoAcknowledge(finishedJustNow: true)
+        }
     }
 
     private func updateProviderState(state: AIState, description: String, actionDetail: String?, isAlreadyAcknowledged: Bool, providerState: inout AIState, providerDesc: inout String, providerNeedsAck: inout Bool, providerActionDetail: UnsafeMutablePointer<String?>?) {

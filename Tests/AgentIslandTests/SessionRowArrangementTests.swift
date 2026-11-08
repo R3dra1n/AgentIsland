@@ -200,4 +200,10 @@ final class SessionRowArrangementTests: XCTestCase {
         XCTAssertEqual(entries.map(\.id), ["codex", "antigravity", "claude"])
         XCTAssertEqual(entries.last?.state, .awaitingInput)
     }
+
+    func testOnlyCodexDesktopCountsAsLookingAtCodexWhenATaskJustFinished() {
+        XCTAssertTrue(AppState.isCodexDesktop(name: "ChatGPT", bundleId: "com.openai.codex"))
+        XCTAssertFalse(AppState.isCodexDesktop(name: "iTerm2", bundleId: "com.googlecode.iterm2"))
+        XCTAssertFalse(AppState.isCodexDesktop(name: "Google Chrome", bundleId: "com.google.Chrome"))
+    }
 }
