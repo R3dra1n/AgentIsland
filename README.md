@@ -51,7 +51,7 @@ AgentIsland 是 macOS 上的 AI 编程助手状态悬浮窗：在菜单栏和屏
 
 <p align="center"><img src="docs/images/settings.png" alt="设置面板" width="330"></p>
 
-行上的「打开」会去到会话实际所在的应用：Codex 跳到对应线程，Antigravity 尽量跳到对应会话并把已完成的标为已查看，Claude 按会话来源打开桌面应用或终端（Claude 桌面端没有指向单个会话的链接，只能把应用带到前台）。
+行上的「打开」会去到会话实际所在的应用：Codex 跳到对应线程，Antigravity 尽量跳到对应会话并把已完成的标为已查看，Claude 按会话来源打开桌面应用或终端：桌面端会直接跳到那个会话（通过桌面应用自己的 `claude://code/continue?session=…` 链接，找不到对应会话时只把应用带到前台），终端里的会话只能把终端带到前台。
 
 ### 悬浮窗里有几行
 

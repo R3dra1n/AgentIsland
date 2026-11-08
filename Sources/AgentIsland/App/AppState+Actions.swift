@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import AppKit
+import os.log
+
+private let openLogger = Logger(subsystem: "io.github.r3dra1n.AgentIsland", category: "Actions")
 
 extension AppState {
     // Direct Actions without stealing window focus
@@ -98,8 +101,8 @@ extension AppState {
     /// Opens the window behind one HUD row, as precisely as the host allows:
     /// Codex jumps to the thread, Antigravity presses the conversation's own
     /// sidebar link (falling back to the app), and Claude goes to the app the
-    /// conversation actually runs in. No assistant offers a per-session link
-    /// for Claude, so that one can only bring the right app forward.
+    /// conversation actually runs in: its desktop app is taken to that very
+    /// conversation, a terminal can only be brought forward.
     public func focusSession(_ row: AIObserverItem) {
         if row.id.hasPrefix(Self.antigravitySessionPrefix) {
             let id = String(row.id.dropFirst(Self.antigravitySessionPrefix.count))
@@ -141,28 +144,77 @@ extension AppState {
     public func openClaudeConversation() { openClaude(session: Self.mostRelevantClaudeSession(claudeSessions)) }
 
     private func openClaude(session: ClaudeSessionSnapshot?) {
-        switch Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle) {
-        case .desktopNeedsInput:
-            openClaudeDesktopApp(jumpToNeedsInput: true)
-        case .desktopApp:
-            openClaudeDesktopApp()
+        let target = Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle)
+        switch target {
+        case .desktopNeedsInput, .desktopApp:
+            openClaudeDesktopApp(target: target, transcriptID: session?.id)
         case .terminal:
             // A conversation we cannot place (no recorded host) used to do
             // nothing when no terminal was running. The desktop app is the
             // better guess than silence.
-            if Self.terminalAppRunning() { focusApp(for: "claude") } else { openClaudeDesktopApp() }
+            if Self.terminalAppRunning() { focusApp(for: "claude") } else { openClaudeDesktopApp(target: .desktopApp, transcriptID: nil) }
         }
     }
 
     nonisolated static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
-    nonisolated static let claudeNeedsInputURL = URL(string: "claude://code/needs-input?source=desktop_action")
 
-    /// Brings Claude's desktop app to the front. Activation always goes
-    /// through the app itself: a bare `claude://` link was seen to leave
-    /// another app (a browser) in front. The needs-input link is only handed
-    /// to Claude afterwards, addressed to that app and without activating,
-    /// so it can pick the waiting conversation but never steal focus.
-    private func openClaudeDesktopApp(jumpToNeedsInput: Bool = false) {
+    /// Where Claude's desktop app keeps one small file per Code conversation.
+    nonisolated static let claudeDesktopSessionsRoot = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/Claude/claude-code-sessions", isDirectory: true)
+
+    /// The desktop app's own name for a conversation, `local_<uuid>`, which is
+    /// what its `claude://code/...?session=` links take. The transcript the
+    /// island watches is named by the CLI's id, so the two are matched through
+    /// the `cliSessionId` each of the app's session files records. Nothing but
+    /// those two ids is read, and an archived conversation is skipped because
+    /// the app cannot open it.
+    nonisolated static func claudeDesktopSessionID(forTranscript id: String, root: URL = claudeDesktopSessionsRoot) -> String? {
+        let fm = FileManager.default
+        var best: (id: String, activity: Double)?
+        let accounts = (try? fm.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        for account in accounts {
+            for org in (try? fm.contentsOfDirectory(at: account, includingPropertiesForKeys: nil)) ?? [] {
+                for file in (try? fm.contentsOfDirectory(at: org, includingPropertiesForKeys: nil)) ?? []
+                where file.lastPathComponent.hasPrefix("local_") && file.pathExtension == "json" {
+                    guard let data = try? Data(contentsOf: file),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          object["cliSessionId"] as? String == id,
+                          object["isArchived"] as? Bool != true,
+                          let local = object["sessionId"] as? String, isDesktopSessionID(local) else { continue }
+                    let activity = (object["lastActivityAt"] as? Double) ?? 0
+                    if best == nil || activity > best!.activity { best = (local, activity) }
+                }
+            }
+        }
+        return best?.id
+    }
+
+    /// The app accepts only this shape in a link; anything else is not put in one.
+    nonisolated static func isDesktopSessionID(_ value: String) -> Bool {
+        value.range(of: "^local_[A-Za-z0-9-]{1,64}$", options: .regularExpression) != nil
+    }
+
+    /// The link that takes Claude's desktop app to a conversation after it has
+    /// been brought forward. Without a known conversation, a waiting one is
+    /// still worth asking for; a finished one then only gets the app.
+    nonisolated static func claudeDeepLink(target: ClaudeOpenTarget, desktopSessionID: String?) -> URL? {
+        let session = desktopSessionID.flatMap { isDesktopSessionID($0) ? $0 : nil }
+        switch target {
+        case .desktopNeedsInput:
+            return URL(string: "claude://code/needs-input?" + (session.map { "session=\($0)&" } ?? "") + "source=desktop_action")
+        case .desktopApp:
+            return session.flatMap { URL(string: "claude://code/continue?session=\($0)&source=desktop_action") }
+        case .terminal:
+            return nil
+        }
+    }
+
+    /// Brings Claude's desktop app to the front and then to the conversation.
+    /// Activation always goes through the app itself: a bare `claude://` link
+    /// was seen to leave another app (a browser) in front. The link follows,
+    /// addressed to that app and without activating, so it picks the
+    /// conversation but never steals focus.
+    private func openClaudeDesktopApp(target: ClaudeOpenTarget, transcriptID: String?) {
         guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.claudeDesktopBundleID) else {
             focusApp(for: "claude"); return
         }
@@ -170,16 +222,21 @@ extension AppState {
         running?.unhide()
         let config = NSWorkspace.OpenConfiguration(); config.activates = true
         NSWorkspace.shared.openApplication(at: appURL, configuration: config,
-                                           completionHandler: Self.handOverNeedsInputLink(to: appURL, if: jumpToNeedsInput))
+                                           completionHandler: Self.handOverClaudeLink(to: appURL, target: target, transcriptID: transcriptID))
     }
 
     /// LaunchServices calls the completion on a background queue, so the
     /// closure has to be built outside the main actor: one made inside it
     /// inherits that isolation and traps the moment it runs off the main thread.
-    nonisolated static func handOverNeedsInputLink(to appURL: URL, if wanted: Bool)
+    /// The conversation lookup reads files, which is why it happens here and
+    /// not on the click.
+    nonisolated static func handOverClaudeLink(to appURL: URL, target: ClaudeOpenTarget, transcriptID: String?)
         -> @Sendable (NSRunningApplication?, Error?) -> Void {
-        { _, _ in
-            guard wanted, let link = claudeNeedsInputURL else { return }
+        { _, error in
+            let local = transcriptID.flatMap { claudeDesktopSessionID(forTranscript: $0) }
+            let link = claudeDeepLink(target: target, desktopSessionID: local)
+            openLogger.notice("claude open: target=\(String(describing: target), privacy: .public) activated=\(error == nil, privacy: .public) link=\(link?.absoluteString ?? "none", privacy: .public)")
+            guard let link else { return }
             let quiet = NSWorkspace.OpenConfiguration(); quiet.activates = false
             NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: quiet, completionHandler: nil)
         }

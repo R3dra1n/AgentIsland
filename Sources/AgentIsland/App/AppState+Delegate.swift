@@ -29,7 +29,7 @@ extension AppState {
         if state == .completed, !isAlreadyAcknowledged {
             // Leave a trace of why something turned green, so an unexpected
             // "done" can be traced back to the times it was judged against.
-            delegateLogger.info("\(observer.id, privacy: .public) completed: lastActive=\(activeDate.timeIntervalSince1970, privacy: .public) lastAck=\(lastAck.timeIntervalSince1970, privacy: .public)")
+            delegateLogger.notice("\(observer.id, privacy: .public) completed: lastActive=\(activeDate.timeIntervalSince1970, privacy: .public) lastAck=\(lastAck.timeIntervalSince1970, privacy: .public)")
         }
 
         if observer.id == "codex" {

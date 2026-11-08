@@ -175,7 +175,7 @@ final class SessionRowArrangementTests: XCTestCase {
     /// the main actor it trapped there and took the whole app down.
     func testOpenCompletionRunsOffTheMainThread() {
         let done = expectation(description: "completion ran on a background queue")
-        let completion = AppState.handOverNeedsInputLink(to: URL(fileURLWithPath: "/Applications/Claude.app"), if: false)
+        let completion = AppState.handOverClaudeLink(to: URL(fileURLWithPath: "/Applications/Claude.app"), target: .terminal, transcriptID: nil)
         DispatchQueue.global().async {
             completion(nil, nil)
             done.fulfill()
