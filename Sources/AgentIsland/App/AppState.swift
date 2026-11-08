@@ -120,6 +120,10 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// but its "done" stays on screen until it is seen, and the row still has
     /// to know where to go when it is clicked.
     var lastKnownClaudeSession: ClaudeSessionSnapshot?
+    /// When the island itself last took the user to a Claude conversation. The
+    /// app it brings forward announces its own activation a moment later, and
+    /// that is not the user switching over to look at everything it hosts.
+    var claudeOpenedByIslandAt: Date?
     @Published var claudeAcknowledgedSessions: [String: Date] = [:] {
         didSet { Self.persistMarks(claudeAcknowledgedSessions, key: "claudeAcknowledgedSessions") }
     }
@@ -535,12 +539,32 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         // looking at it. This is decided per conversation: the provider-level
         // flag is false whenever another conversation is still running, which
         // used to leave a finished one waiting for a click.
-        for id in Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
-                                                        frontName: name, frontBundle: bundleId) {
-            acknowledgeClaudeSession(id)
-        }
+        acknowledgeClaudeConversationsViewedByActivating(frontName: name, frontBundle: bundleId, now: Date())
         if claudeSessions.isEmpty, claudeNeedsAck, !finishedJustNow, isAppActive(name: name, bundleId: bundleId, for: "claude") {
             acknowledgeClaude()
+        }
+    }
+
+    /// How long after the island opens a conversation the host app's activation
+    /// is taken to be the island's own doing. Long enough for an app that has to
+    /// be launched first.
+    nonisolated static let ownActivationWindow: TimeInterval = 6
+
+    nonisolated static func isOwnClaudeActivation(openedAt: Date?, now: Date) -> Bool {
+        guard let openedAt else { return false }
+        let elapsed = now.timeIntervalSince(openedAt)
+        return elapsed >= 0 && elapsed <= ownActivationWindow
+    }
+
+    /// The user switching to the app a finished conversation runs in is looking
+    /// at it. Not when the island did the switching to open one particular
+    /// conversation: that one is marked by `noteClaudeConversationOpened`, and the
+    /// others, which nobody has looked at, stay as they are.
+    func acknowledgeClaudeConversationsViewedByActivating(frontName: String, frontBundle: String, now: Date) {
+        guard !Self.isOwnClaudeActivation(openedAt: claudeOpenedByIslandAt, now: now) else { return }
+        for id in Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
+                                                        frontName: frontName, frontBundle: frontBundle) {
+            acknowledgeClaudeSession(id)
         }
     }
 

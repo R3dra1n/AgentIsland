@@ -404,3 +404,101 @@ final class ClaudeFinishedRowStillOpensTests: XCTestCase {
         XCTAssertNil(AppState.claudeSessionToOpen(live: [], remembered: nil))
     }
 }
+
+/// The reported defect: opening one of two finished Claude conversations turned
+/// both grey. Bringing the desktop app forward announced an activation, which was
+/// taken as the user switching over to look at everything the app hosts.
+@MainActor
+final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
+    private let desktop = (name: "Claude", bundle: "com.anthropic.claudefordesktop")
+
+    private func makeState(_ sessions: [ClaudeSessionSnapshot]) -> AppState {
+        _ = NSApplication.shared
+        let state = AppState()
+        // The app's own observers read the real home directory; they must not
+        // report into this test.
+        [state.codexObserver as any AIObserverProtocol, state.antigravityObserver, state.claudeObserver,
+         state.cursorObserver, state.windsurfObserver, state.traeObserver].forEach { $0.stopObserving() }
+        state.lastAcknowledgedDates = [:]
+        state.claudeAcknowledgedSessions = [:]
+        state.claudeSessions = sessions
+        state.claudeState = sessions.contains { $0.state == .completed } ? .completed : .running
+        state.claudeNeedsAck = sessions.contains { $0.state == .completed }
+        return state
+    }
+
+    private func session(_ id: String, _ state: AIState, finishedAgo: TimeInterval = 30) -> ClaudeSessionSnapshot {
+        let t = Date().addingTimeInterval(-finishedAgo)
+        return ClaudeSessionSnapshot(id: id, state: state, description: "d", actionDetail: nil, lastActiveDate: t,
+                                     completedAt: state == .completed ? t : nil, entrypoint: "claude-desktop")
+    }
+
+    private func viewed(_ state: AppState, _ id: String) -> Bool {
+        guard let s = state.claudeSessions.first(where: { $0.id == id }), let done = s.completedAt else { return false }
+        return (state.claudeAcknowledgedSessions[id] ?? .distantPast) >= done
+    }
+
+    func testOpeningOneOfTwoFinishedConversationsLeavesTheOtherAsItWas() {
+        let a = session("a", .completed), b = session("b", .completed)
+        let state = makeState([a, b])
+
+        state.noteClaudeConversationOpened(a)
+        // The app comes forward and says so a moment later.
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+
+        XCTAssertTrue(viewed(state, "a"), "the conversation that was opened has been looked at")
+        XCTAssertFalse(viewed(state, "b"), "the other one has not")
+        XCTAssertEqual(state.claudeState, .completed, "so the provider still has something to show")
+        XCTAssertTrue(state.claudeNeedsAck)
+    }
+
+    func testOpeningTheLastUnviewedConversationClearsTheProvider() {
+        let a = session("a", .completed), b = session("b", .completed)
+        let state = makeState([a, b])
+        state.noteClaudeConversationOpened(a)
+        state.noteClaudeConversationOpened(b)
+        XCTAssertTrue(viewed(state, "a") && viewed(state, "b"))
+        XCTAssertEqual(state.claudeState, .idle)
+        XCTAssertFalse(state.claudeNeedsAck)
+    }
+
+    func testOpeningARunningConversationDoesNotClearAFinishedOne() {
+        let running = session("run", .running), done = session("done", .completed)
+        let state = makeState([running, done])
+        state.noteClaudeConversationOpened(running)
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+        XCTAssertFalse(viewed(state, "done"), "going to look at one conversation is not looking at the finished one")
+    }
+
+    func testTheUserSwitchingToTheAppStillViewsWhatItHosts() {
+        // Nothing was opened by the island, so this is the user's own doing.
+        let state = makeState([session("a", .completed), session("b", .completed)])
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date())
+        XCTAssertTrue(viewed(state, "a") && viewed(state, "b"))
+    }
+
+    func testTheIslandsOwnActivationIsOnlyIgnoredForAMoment() {
+        let a = session("a", .completed), b = session("b", .completed)
+        let state = makeState([a, b])
+        state.noteClaudeConversationOpened(a)
+        let opened = state.claudeOpenedByIslandAt!
+        // Well after the island's own switch, coming back to the app is the user's.
+        state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle,
+                                                               now: opened.addingTimeInterval(AppState.ownActivationWindow + 1))
+        XCTAssertTrue(viewed(state, "b"))
+        XCTAssertFalse(AppState.isOwnClaudeActivation(openedAt: nil, now: Date()))
+        XCTAssertTrue(AppState.isOwnClaudeActivation(openedAt: opened, now: opened.addingTimeInterval(1)))
+        XCTAssertFalse(AppState.isOwnClaudeActivation(openedAt: opened, now: opened.addingTimeInterval(AppState.ownActivationWindow + 1)))
+    }
+
+    func testAFinishedConversationThatLeftTheLiveListIsClearedWhenOpened() {
+        // Nothing live, "done" still showing: the row opens the remembered
+        // conversation, and that has been looked at.
+        let state = makeState([])
+        state.claudeState = .completed
+        state.claudeNeedsAck = true
+        state.noteClaudeConversationOpened(session("gone", .completed))
+        XCTAssertEqual(state.claudeState, .idle)
+        XCTAssertFalse(state.claudeNeedsAck)
+    }
+}

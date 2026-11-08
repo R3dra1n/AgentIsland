@@ -160,7 +160,22 @@ extension AppState {
 
     public func openClaudeConversation() { openClaude(session: Self.claudeSessionToOpen(live: claudeSessions, remembered: lastKnownClaudeSession)) }
 
+    /// Taking the user to one conversation is looking at that conversation, and
+    /// only that one. Bringing the host app forward used to mark everything the
+    /// app hosts as viewed (it cannot say which conversation is on screen), so
+    /// opening one finished conversation turned the others grey as well, though
+    /// nobody had looked at them.
+    func noteClaudeConversationOpened(_ session: ClaudeSessionSnapshot?) {
+        guard let session else { return }
+        claudeOpenedByIslandAt = Date()
+        acknowledgeClaudeSession(session.id)
+        // Nothing live to mark, but a "done" is still showing for the
+        // conversation that just finished (see `claudeSessionToOpen`).
+        if claudeSessions.isEmpty, claudeNeedsAck { acknowledgeClaude() }
+    }
+
     private func openClaude(session: ClaudeSessionSnapshot?) {
+        noteClaudeConversationOpened(session)
         let target = Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle)
         // Every attempt leaves a line, including the ones that only bring a
         // terminal forward and so never reach the desktop-app log below.
