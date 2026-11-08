@@ -17,10 +17,15 @@ public struct FloatingHUDView: View {
     @State private var dismissedAttention: Set<String> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let onContentSizeChange: (CGSize) -> Void
+    /// What a click on a row's light does. Opens the conversation unless a
+    /// caller (a test, which must not open real windows) says otherwise.
+    private let onFocusRow: (AIObserverItem) -> Void
 
-    public init(appState: AppState, onContentSizeChange: @escaping (CGSize) -> Void = { _ in }) {
+    public init(appState: AppState, onContentSizeChange: @escaping (CGSize) -> Void = { _ in },
+                onFocusRow: ((AIObserverItem) -> Void)? = nil) {
         self.appState = appState
         self.onContentSizeChange = onContentSizeChange
+        self.onFocusRow = onFocusRow ?? { appState.focusSession($0) }
     }
 
     private var itemsToShow: [AIObserverItem] {
@@ -48,7 +53,7 @@ public struct FloatingHUDView: View {
             // the demo/test mode) instead of approving by key press.
             onApprove: { claudeSessionRow ? appState.focusSession(item) : appState.approve(for: provider) },
             onReject: { claudeSessionRow ? appState.focusSession(item) : appState.reject(for: provider) },
-            onFocus: { appState.focusSession(item) },
+            onFocus: { onFocusRow(item) },
             onAcknowledge: {
                 if provider == "claude", claudeSessionRow {
                     appState.acknowledgeClaudeSession(String(item.id.dropFirst(AppState.claudeSessionPrefix.count)))
@@ -269,6 +274,26 @@ struct HUDPillButtonStyle: ButtonStyle {
 extension View {
     /// The row chrome: 52 pt tall, 15 pt corners, 12 pt side padding, a faint
     /// white fill (red when the row needs the user).
+    /// Makes a row's light open its conversation. The hit area is a margin
+    /// larger than the 10-16 pt drawing, which is hard to land on, and grows
+    /// outward without moving anything: the margin is added and taken back, so
+    /// the layout is the drawing's own size.
+    @ViewBuilder
+    func logoTapTarget(enabled: Bool, action: @escaping () -> Void) -> some View {
+        if enabled {
+            self
+                .padding(HUDStyle.logoHitMargin)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: action)
+                .padding(-HUDStyle.logoHitMargin)
+                .help("点击图标打开对应会话")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction(named: "打开对应会话", action)
+        } else {
+            self
+        }
+    }
+
     func hudRowChrome(state: AIState) -> some View {
         self
             .padding(.horizontal, HUDStyle.rowHorizontalPadding)
@@ -485,7 +510,13 @@ public struct AISegmentView: View {
         HStack(spacing: HUDStyle.rowContentSpacing) {
             // The row's light follows the closed capsule: an icon when the
             // capsule shows icons, a dot when it shows dots.
+            //
+            // The light is also the way into the conversation, and only it:
+            // every other part of the island takes a click as "open or close".
+            // Making the name and state open the conversation as well took the
+            // click away from the capsule, and left no place to click to close.
             HUDDotView(state: item.state, icon: appState.hudShowsIcons ? item.icon : nil)
+                .logoTapTarget(enabled: onFocus != nil) { onFocus?() }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.name)
@@ -500,13 +531,6 @@ public struct AISegmentView: View {
                     .help(secondaryHelp)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            // The name and state are a way into the conversation too. Only a
-            // finished row used to have a button for it, so a conversation that
-            // was still running (or one the user simply clicked on) had no way
-            // to be opened from here at all.
-            .contentShape(Rectangle())
-            .onTapGesture { onFocus?() }
-            .help("点击打开对应会话")
 
             actions
         }

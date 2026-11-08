@@ -21,6 +21,9 @@ enum HUDStyle {
     static let dotSize: CGFloat = 10
     static let dotSpacing: CGFloat = 10
     static let rowContentSpacing: CGFloat = 12
+    /// How far past the drawn light a click still counts as a click on it.
+    /// Under half of `rowContentSpacing`, so it never reaches the text.
+    static let logoHitMargin: CGFloat = 6
 
     /// Transparent margin kept around the capsule inside its window so the
     /// shadow (0 10 34) is not clipped.
