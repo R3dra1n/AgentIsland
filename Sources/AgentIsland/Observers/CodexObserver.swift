@@ -82,6 +82,13 @@ public final class CodexObserver: AIObserverProtocol {
                 let recent = await scanner.recentCodexSessionIDs()
                 let sessions = pendingSessions.union(recent).union(fallbackActive.keys).filter { !$0.isEmpty }
                 var liveStates: [CodexLiveActivity] = []
+                // The first time round, the transcripts alone already say what is
+                // going on. Showing that now means the rows are there as soon as
+                // they have been read, instead of after the desktop has also
+                // answered (or, for a conversation it has not open, given up).
+                if let me = self, me.state == .unknown {
+                    me.publish(Self.resolved(snapshot, liveStates: [], fallback: fallbackActive, finished: finishedByTranscript, now: Date()))
+                }
                 await withTaskGroup(of: (String, [CodexPendingRequest]?, CodexLiveActivity?, Set<String>, Set<String>).self) { group in
                     for session in sessions {
                         group.addTask {
@@ -110,24 +117,33 @@ public final class CodexObserver: AIObserverProtocol {
                         }
                     }
                 }
-                snapshot.codexRequests.sort { $0.id < $1.id }
-                snapshot.codexSessions = Self.sessionSnapshots(live: liveStates, fallback: fallbackActive, finished: finishedByTranscript,
-                                                               requests: snapshot.codexRequests, now: Date())
-                if !snapshot.codexRequests.isEmpty {
-                    snapshot.state = .awaitingInput
-                    snapshot.description = "Codex 正在等待操作"
-                    snapshot.actionDetail = snapshot.codexRequests.first?.context
-                } else if let live = Self.aggregateLiveAndFallback(liveStates, fallback: fallbackActive, finished: finishedByTranscript) {
-                    snapshot.state = live.state
-                    snapshot.description = "Codex：\(live.state.title)"
-                    snapshot.lastActiveDate = live.startedAt ?? snapshot.lastActiveDate
-                    snapshot.actionDetail = nil
-                }
+                snapshot = Self.resolved(snapshot, liveStates: liveStates, fallback: fallbackActive, finished: finishedByTranscript, now: Date())
                 guard !Task.isCancelled else { return }
                 self?.publish(snapshot)
                 do { try await Task.sleep(nanoseconds: 1_000_000_000) } catch { return }
             }
         }
+    }
+
+    /// What the sources add up to: requests someone has to answer, else the
+    /// conversation that is active or newest, and the list of conversations.
+    nonisolated static func resolved(_ scanned: ObserverSnapshot, liveStates: [CodexLiveActivity], fallback: [String: AIState],
+                                     finished: [CodexLiveActivity], now: Date) -> ObserverSnapshot {
+        var snapshot = scanned
+        snapshot.codexRequests.sort { $0.id < $1.id }
+        snapshot.codexSessions = sessionSnapshots(live: liveStates, fallback: fallback, finished: finished,
+                                                  requests: snapshot.codexRequests, now: now)
+        if !snapshot.codexRequests.isEmpty {
+            snapshot.state = .awaitingInput
+            snapshot.description = "Codex 正在等待操作"
+            snapshot.actionDetail = snapshot.codexRequests.first?.context
+        } else if let live = aggregateLiveAndFallback(liveStates, fallback: fallback, finished: finished) {
+            snapshot.state = live.state
+            snapshot.description = "Codex：\(live.state.title)"
+            snapshot.lastActiveDate = live.startedAt ?? snapshot.lastActiveDate
+            snapshot.actionDetail = nil
+        }
+        return snapshot
     }
 
     public func stopObserving() { polling?.cancel(); polling = nil }

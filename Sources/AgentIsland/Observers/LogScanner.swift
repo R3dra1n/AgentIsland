@@ -297,10 +297,18 @@ actor LogScanner {
         return requests
     }
 
-    private static func parseDate(_ value: String?) -> Date? {
-        guard let value else { return nil }
+    // Built once: a restart reads every record of the day's transcripts, tens of
+    // thousands of them, and a formatter made for each one was most of the time.
+    // Formatting dates is safe from any thread.
+    private nonisolated(unsafe) static let fractionalDates: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        return formatter
+    }()
+    private nonisolated(unsafe) static let plainDates = ISO8601DateFormatter()
+
+    private static func parseDate(_ value: String?) -> Date? {
+        guard let value else { return nil }
+        return fractionalDates.date(from: value) ?? plainDates.date(from: value)
     }
 }

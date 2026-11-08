@@ -45,11 +45,20 @@ actor CodexDesktopBridge {
         return try JSONDecoder().decode(Reply.self, from: data)
     }
 
+    /// A conversation the desktop has open answers in half a second to a bit
+    /// over one when it is busy; this leaves room for that and still does not
+    /// make a conversation it does not have open cost the whole four.
+    static let idleSnapshotWait: TimeInterval = 2.5
+
     func requests(session: String, force: Bool = false, loadFullHistory: Bool = false) async -> (requests: [CodexPendingRequest], activity: CodexLiveActivity, resolvedAsyncCallIDs: Set<String>, historicalAsyncCallIDs: Set<String>)? {
         if !force, let retry = retryAfter[session], retry > Date() { return nil }
         let loadHistory = loadFullHistory && (historyRetryAfter[session] ?? .distantPast) <= Date()
         if loadHistory { historyRetryAfter[session] = Date().addingTimeInterval(30) }
-        guard let reply = try? await call(["sessionID": session, "loadCompleteHistory": loadHistory]), reply.ok else {
+        // Something waiting or running is worth the full wait; a conversation
+        // with nothing going on is only asked about to date its result, and the
+        // transcripts answer that when the desktop does not.
+        let wait = force ? 4.0 : Self.idleSnapshotWait
+        guard let reply = try? await call(["sessionID": session, "loadCompleteHistory": loadHistory, "snapshotWaitSeconds": wait]), reply.ok else {
             retryAfter[session] = Date().addingTimeInterval(30)
             return nil
         }

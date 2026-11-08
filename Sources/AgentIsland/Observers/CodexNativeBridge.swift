@@ -142,7 +142,10 @@ private final class CodexIPCSession {
     var owner: String?
     var state: [String: Any]?
 
-    init(thread: String, transport: CodexIPCTransport) throws {
+    /// `snapshotWait` is how long to wait for the desktop to push the thread's
+    /// snapshot. A thread it has open answers in about half a second; one it does
+    /// not have open never does, and used to cost the whole four seconds.
+    init(thread: String, transport: CodexIPCTransport, snapshotWait: TimeInterval = 4) throws {
         self.thread = thread
         self.transport = transport
         let result = try request("initialize", params: ["clientType": "agent-island"], version: 0)
@@ -151,7 +154,7 @@ private final class CodexIPCSession {
         try transport.send(["type": "broadcast", "sourceClientId": client, "version": 1,
                             "method": "thread-stream-following-changed",
                             "params": ["conversationId": thread, "hostId": "local", "following": true]])
-        let limit = ProcessInfo.processInfo.systemUptime + 4
+        let limit = ProcessInfo.processInfo.systemUptime + snapshotWait
         while state == nil { _ = try receive(until: limit) }
     }
 
@@ -395,7 +398,8 @@ enum CodexNativeBridge {
               let thread = command["sessionID"] as? String, !thread.isEmpty else { throw CodexIPCTransport.Failure.invalid("缺少 Codex 会话标识") }
         let home = ProcessInfo.processInfo.environment["CODEX_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex").path
         let connection = try transport ?? CodexIPCTransport(path: URL(fileURLWithPath: home).appendingPathComponent("ipc/ipc.sock").path)
-        let session = try CodexIPCSession(thread: thread, transport: connection)
+        let wait = (command["snapshotWaitSeconds"] as? NSNumber)?.doubleValue ?? 4
+        let session = try CodexIPCSession(thread: thread, transport: connection, snapshotWait: min(max(wait, 0.5), 4))
         if command["loadCompleteHistory"] as? Bool == true,
            let history = session.state?["turnHistory"] as? [String: Any], history["kind"] as? String == "canonical",
            let store = history["history"] as? [String: Any], store["isComplete"] as? Bool == false {

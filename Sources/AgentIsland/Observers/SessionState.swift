@@ -492,6 +492,10 @@ struct JSONLReader: Sendable {
     var pending = Data()
     var fileID: UInt64?
     var lastModification: Date?
+    /// How much is read at a time. Transcripts reach hundreds of megabytes (a
+    /// single record, a tool's output or an image, can be hundreds of kilobytes),
+    /// and a restart reads every one of them from the start.
+    var chunkSize = 4 * 1024 * 1024
 
     mutating func read(_ url: URL, consume: ([String: Any]) -> Void) throws -> Bool {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
@@ -506,15 +510,26 @@ struct JSONLReader: Sendable {
         try handle.seek(toOffset: offset)
         // Bound each read, but process the entire snapshot before publishing state.
         while offset < size {
-            let data = try handle.read(upToCount: Int(min(262144, size - offset))) ?? Data()
+            let data = try handle.read(upToCount: Int(min(UInt64(chunkSize), size - offset))) ?? Data()
             if data.isEmpty { break }
             offset += UInt64(data.count)
             pending.append(data)
-            while let newline = pending.firstIndex(of: 10) {
-                let record = pending.prefix(upTo: newline)
-                if let json = try? JSONSerialization.jsonObject(with: record) as? [String: Any] { consume(json) }
-                pending.removeSubrange(...newline)
+            // Every complete record in what is held is handed over in place: the
+            // newline search covers the held bytes once (never again from the
+            // start for each chunk of a long record), and nothing is copied
+            // before the parser sees it.
+            var consumed = 0
+            pending.withUnsafeBytes { (buffer: UnsafeRawBufferPointer) in
+                guard let base = buffer.baseAddress else { return }
+                while consumed < buffer.count,
+                      let found = memchr(base + consumed, 10, buffer.count - consumed) {
+                    let end = base.distance(to: UnsafeRawPointer(found))
+                    let record = Data(bytesNoCopy: UnsafeMutableRawPointer(mutating: base + consumed), count: end - consumed, deallocator: .none)
+                    if let json = try? JSONSerialization.jsonObject(with: record) as? [String: Any] { consume(json) }
+                    consumed = end + 1
+                }
             }
+            if consumed > 0 { pending.removeSubrange(0..<consumed) }
             if pending.count > 16 * 1024 * 1024 { throw CocoaError(.fileReadTooLarge) }
         }
         return reset
