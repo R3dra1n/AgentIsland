@@ -170,4 +170,34 @@ final class SessionRowArrangementTests: XCTestCase {
         // No mark but real activity is.
         XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: .distantPast, finishedAt: finished))
     }
+
+    /// LaunchServices runs this completion on a background queue. Built inside
+    /// the main actor it trapped there and took the whole app down.
+    func testOpenCompletionRunsOffTheMainThread() {
+        let done = expectation(description: "completion ran on a background queue")
+        let completion = AppState.handOverNeedsInputLink(to: URL(fileURLWithPath: "/Applications/Claude.app"), if: false)
+        DispatchQueue.global().async {
+            completion(nil, nil)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+    }
+
+    @MainActor
+    func testMenuBarKeepsOneIconPerAssistantWhateverRowsTheIslandShows() {
+        func row(_ id: String, _ icon: String, _ state: AIState) -> AIObserverItem {
+            AIObserverItem(id: id, name: icon, icon: icon, isEnabled: true, state: state, description: "")
+        }
+        let entries = MenuBarLabelView.menuBarEntries(from: [
+            row("codex", "codex", .idle),
+            row("antigravity-session:1", "antigravity", .idle),
+            row("claude-session:1", "claude", .running),
+            row("claude-session:2", "claude", .completed),
+            row("claude-session:3", "claude", .awaitingInput),
+        ])
+        // Two conversations used to draw two blank circles, because their ids
+        // are not icon names; now they share the assistant's own icon.
+        XCTAssertEqual(entries.map(\.id), ["codex", "antigravity", "claude"])
+        XCTAssertEqual(entries.last?.state, .awaitingInput)
+    }
 }

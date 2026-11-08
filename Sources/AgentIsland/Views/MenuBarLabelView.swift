@@ -12,22 +12,32 @@ public struct MenuBarLabelView: View {
         Image(nsImage: Self.generateMenuBarImage(appState: appState))
     }
 
-    public static func generateMenuBarImage(appState: AppState, isDark: Bool? = nil) -> NSImage {
-        struct Item {
-            let id: String
-            let state: AIState
-        }
-        var items: [Item] = []
-        for obs in appState.displayedObservers {
-            // Keep one aggregate Antigravity icon in the narrow menu bar;
-            // the HUD itself shows its sessions as separate rows.
-            if obs.icon == "antigravity", let index = items.firstIndex(where: { $0.id == "antigravity" }) {
-                items[index] = Item(id: "antigravity", state: max(items[index].state, obs.state))
+    struct MenuBarEntry: Equatable {
+        let id: String
+        let state: AIState
+    }
+
+    /// One entry per assistant, in the order they first appear, showing its most
+    /// urgent state. The HUD lists conversations and "+N" chips as separate
+    /// rows whose ids are not icon names; keyed by id they were drawn as blank
+    /// circles, and a second conversation of the same assistant got its own
+    /// slot in the narrow menu bar.
+    static func menuBarEntries(from observers: [AIObserverItem]) -> [MenuBarEntry] {
+        var entries: [MenuBarEntry] = []
+        for observer in observers {
+            if let index = entries.firstIndex(where: { $0.id == observer.icon }) {
+                entries[index] = MenuBarEntry(id: observer.icon, state: max(entries[index].state, observer.state))
             } else {
-                items.append(Item(id: obs.icon == "antigravity" ? "antigravity" : obs.id, state: obs.state))
+                entries.append(MenuBarEntry(id: observer.icon, state: observer.state))
             }
         }
-        
+        return entries
+    }
+
+    public static func generateMenuBarImage(appState: AppState, isDark: Bool? = nil) -> NSImage {
+        typealias Item = MenuBarEntry
+        var items = menuBarEntries(from: appState.displayedObservers)
+
         if items.isEmpty {
             items.append(Item(id: "agentisland_fallback", state: .idle))
         }

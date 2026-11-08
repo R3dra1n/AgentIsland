@@ -169,8 +169,17 @@ extension AppState {
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeDesktopBundleID).first
         running?.unhide()
         let config = NSWorkspace.OpenConfiguration(); config.activates = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in
-            guard jumpToNeedsInput, let link = Self.claudeNeedsInputURL else { return }
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config,
+                                           completionHandler: Self.handOverNeedsInputLink(to: appURL, if: jumpToNeedsInput))
+    }
+
+    /// LaunchServices calls the completion on a background queue, so the
+    /// closure has to be built outside the main actor: one made inside it
+    /// inherits that isolation and traps the moment it runs off the main thread.
+    nonisolated static func handOverNeedsInputLink(to appURL: URL, if wanted: Bool)
+        -> @Sendable (NSRunningApplication?, Error?) -> Void {
+        { _, _ in
+            guard wanted, let link = claudeNeedsInputURL else { return }
             let quiet = NSWorkspace.OpenConfiguration(); quiet.activates = false
             NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: quiet, completionHandler: nil)
         }
