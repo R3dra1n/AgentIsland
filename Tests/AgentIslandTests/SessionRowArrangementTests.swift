@@ -159,4 +159,15 @@ final class SessionRowArrangementTests: XCTestCase {
         XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(-120), finishedAt: finished))
         XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: nil, finishedAt: finished))
     }
+
+    func testProviderLevelMarkKeepsTheSameMarginAndTheNoActivityCase() {
+        let finished = Date(timeIntervalSince1970: 1_000_000)
+        // Codex's "last active" can move a few seconds after the user looked.
+        XCTAssertTrue(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(-AppState.viewedGrace + 1), finishedAt: finished))
+        XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: finished.addingTimeInterval(-AppState.viewedGrace - 1), finishedAt: finished))
+        // No mark and no activity yet is not something to announce.
+        XCTAssertTrue(AppState.viewMarkCovers(acknowledgedAt: .distantPast, finishedAt: .distantPast))
+        // No mark but real activity is.
+        XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: .distantPast, finishedAt: finished))
+    }
 }

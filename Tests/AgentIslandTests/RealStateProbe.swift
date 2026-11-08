@@ -26,7 +26,7 @@ final class RealStateProbe: XCTestCase {
                                      hookURL: CodexObserver.hookJournalURL(home: home)).scan(now: now)
         var perSession: [String: Int] = [:]
         for request in codex.codexRequests { perSession[request.sessionID, default: 0] += 1 }
-        print("PROBE codex state=\(codex.state.rawValue) pendingRequests=\(codex.codexRequests.count)")
+        print("PROBE codex state=\(codex.state.rawValue) pendingRequests=\(codex.codexRequests.count) lastActive=\(age(codex.lastActiveDate))")
         for (id, count) in perSession.sorted(by: { $0.key < $1.key }) { print("PROBE   codex session=\(id.prefix(8)) requests=\(count)") }
 
         let antigravity = await LogScanner(source: "antigravity",

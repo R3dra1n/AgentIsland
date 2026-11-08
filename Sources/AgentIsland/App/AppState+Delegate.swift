@@ -1,5 +1,8 @@
 import Foundation
 import AppKit
+import os.log
+
+private let delegateLogger = Logger(subsystem: "io.github.r3dra1n.AgentIsland", category: "Observers")
 
 extension AppState {
     public func observer(_ observer: any AIObserverProtocol, didUpdateState state: AIState, description: String, actionDetail: String?) {
@@ -8,7 +11,9 @@ extension AppState {
         let now = Date()
         let lastAck = lastAcknowledgedDates[observer.id] ?? .distantPast
         let activeDate = observer.lastActiveDate ?? .distantPast
-        var isAlreadyAcknowledged = lastAck >= activeDate
+        // The same margin as the per-conversation marks: the host rewrites the
+        // data "last active" comes from a few seconds after the user looked.
+        var isAlreadyAcknowledged = Self.viewMarkCovers(acknowledgedAt: lastAck, finishedAt: activeDate)
         if observer.id == "antigravity", !isAlreadyAcknowledged {
             // The provider-level mark is only kept in memory, so after a restart
             // it is empty and a finished conversation the user had already
@@ -19,6 +24,12 @@ extension AppState {
             isAlreadyAcknowledged = !finished.isEmpty && finished.allSatisfy {
                 Self.viewMarkCovers(acknowledgedAt: antigravityAcknowledgedSessions[$0.id], finishedAt: $0.completedAt ?? $0.lastActiveDate)
             }
+        }
+
+        if state == .completed, !isAlreadyAcknowledged {
+            // Leave a trace of why something turned green, so an unexpected
+            // "done" can be traced back to the times it was judged against.
+            delegateLogger.info("\(observer.id, privacy: .public) completed: lastActive=\(activeDate.timeIntervalSince1970, privacy: .public) lastAck=\(lastAck.timeIntervalSince1970, privacy: .public)")
         }
 
         if observer.id == "codex" {

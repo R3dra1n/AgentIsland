@@ -11,6 +11,10 @@ extension AppState {
             return
         }
         if ["cursor", "windsurf", "trae"].contains(observerId) { focusApp(for: observerId); return }
+        // Claude Code cannot be answered from outside: a key press lands on
+        // whatever window is in front and cannot pick one of its options, so
+        // bring the conversation forward and let the user answer there.
+        if observerId == "claude", !testModeActive { openClaudeConversation(); return }
         DirectActionEngine.shared.approveInBackground(observerId: observerId, appState: self)
     }
 
@@ -21,6 +25,7 @@ extension AppState {
             return
         }
         if ["cursor", "windsurf", "trae"].contains(observerId) { focusApp(for: observerId); return }
+        if observerId == "claude", !testModeActive { openClaudeConversation(); return }
         DirectActionEngine.shared.rejectInBackground(observerId: observerId, appState: self)
     }
 
@@ -39,6 +44,7 @@ extension AppState {
             return
         }
         if ["cursor", "windsurf", "trae"].contains(id) { focusApp(for: id); return }
+        if id == "claude", !testModeActive { openClaudeConversation(); return }
         if id == "antigravity", !DirectActionEngine.shared.canSendAntigravityAction(appState: self) { return }
         if id == "codex" {
             codexState = .running
@@ -137,7 +143,7 @@ extension AppState {
     private func openClaude(session: ClaudeSessionSnapshot?) {
         switch Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle) {
         case .desktopNeedsInput:
-            if let url = URL(string: "claude://code/needs-input?source=desktop_action") { NSWorkspace.shared.open(url) }
+            openClaudeDesktopApp(jumpToNeedsInput: true)
         case .desktopApp:
             openClaudeDesktopApp()
         case .terminal:
@@ -148,11 +154,26 @@ extension AppState {
         }
     }
 
-    private func openClaudeDesktopApp() {
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
-            let config = NSWorkspace.OpenConfiguration(); config.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: config, completionHandler: nil)
-        } else { focusApp(for: "claude") }
+    nonisolated static let claudeDesktopBundleID = "com.anthropic.claudefordesktop"
+    nonisolated static let claudeNeedsInputURL = URL(string: "claude://code/needs-input?source=desktop_action")
+
+    /// Brings Claude's desktop app to the front. Activation always goes
+    /// through the app itself: a bare `claude://` link was seen to leave
+    /// another app (a browser) in front. The needs-input link is only handed
+    /// to Claude afterwards, addressed to that app and without activating,
+    /// so it can pick the waiting conversation but never steal focus.
+    private func openClaudeDesktopApp(jumpToNeedsInput: Bool = false) {
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.claudeDesktopBundleID) else {
+            focusApp(for: "claude"); return
+        }
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeDesktopBundleID).first
+        running?.unhide()
+        let config = NSWorkspace.OpenConfiguration(); config.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config) { _, _ in
+            guard jumpToNeedsInput, let link = Self.claudeNeedsInputURL else { return }
+            let quiet = NSWorkspace.OpenConfiguration(); quiet.activates = false
+            NSWorkspace.shared.open([link], withApplicationAt: appURL, configuration: quiet, completionHandler: nil)
+        }
     }
 
     nonisolated static let terminalNames = ["iTerm2", "Terminal", "Ghostty", "Warp", "Alacritty", "Kitty"]

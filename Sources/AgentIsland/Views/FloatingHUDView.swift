@@ -42,9 +42,10 @@ public struct FloatingHUDView: View {
         let provider = item.icon == "antigravity" ? "antigravity" : (claudeSessionRow ? "claude" : item.id)
         let sessionRow = item.id.hasPrefix(AppState.antigravitySessionPrefix)
         AISegmentView(appState: appState, item: item,
-            // With several Claude Code conversations a blind keystroke cannot
-            // be aimed at the right one, so a conversation's row only brings
-            // the original window forward instead of approving by key press.
+            // A blind keystroke cannot be aimed at the right Claude Code
+            // conversation, nor choose one of its options, so Claude's rows
+            // only bring the original window forward (the real app, outside
+            // the demo/test mode) instead of approving by key press.
             onApprove: { claudeSessionRow ? appState.focusSession(item) : appState.approve(for: provider) },
             onReject: { claudeSessionRow ? appState.focusSession(item) : appState.reject(for: provider) },
             onFocus: { appState.focusSession(item) },
@@ -366,6 +367,10 @@ public struct AISegmentView: View {
 
     private var isAntigravity: Bool { item.icon == "antigravity" || item.id == "antigravity" }
     private var isClaudeSession: Bool { item.id.hasPrefix(AppState.claudeSessionPrefix) }
+    /// Any Claude row, per conversation or folded into one. Outside the demo
+    /// the island can only open Claude for these, never answer on its behalf.
+    private var isClaude: Bool { isClaudeSession || item.id == "claude" || item.icon == "claude" }
+    private var opensHostToHandle: Bool { isClaude && !appState.testModeActive }
     private var rowSessionID: String? {
         guard item.id.hasPrefix(AppState.antigravitySessionPrefix) else { return nil }
         return String(item.id.dropFirst(AppState.antigravitySessionPrefix.count))
@@ -430,11 +435,11 @@ public struct AISegmentView: View {
                 // response can only pass if the controller revalidates it.
                 presentedQuestion = question
             }
-        } else if isClaudeSession {
+        } else if opensHostToHandle {
             VStack(alignment: .leading, spacing: 5) {
                 ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: false,
                                     showsDisabledActions: true, onChoose: nil, onSend: nil)
-                Text("Claude Code 没有提供「指定某个会话」的回复通道，按键只能送到最前面的窗口，可能答错会话。请点「打开处理」回到 Claude，在对应会话里回答。")
+                Text("灵动岛没法替 Claude 点选项：按键选不了具体选项，还可能送到别的窗口。请点「打开处理」回到 Claude，在对应会话里回答。")
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
         } else {
@@ -473,7 +478,7 @@ public struct AISegmentView: View {
 
     private var approveTitle: String {
         if item.id == "codex" { return "处理请求" }
-        return (isAntigravity || isClaudeSession || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"
+        return (isAntigravity || opensHostToHandle || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"
     }
 
     public var body: some View {
@@ -527,7 +532,7 @@ public struct AISegmentView: View {
                     }
                 }
 
-                if !isAntigravity || appState.testModeActive {
+                if (!isAntigravity && !opensHostToHandle) || appState.testModeActive {
                     Button("拒绝") { onReject?() }
                         .buttonStyle(HUDPillButtonStyle(primary: false))
                 }
