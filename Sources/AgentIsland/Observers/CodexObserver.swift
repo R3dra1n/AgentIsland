@@ -62,6 +62,7 @@ public final class CodexObserver: AIObserverProtocol {
                 let pendingSessions = Set((snapshot.codexRequests + previousRequests).map(\.sessionID))
                 let historyNeededSessions = Self.sessionsNeedingHistory(scanned: snapshot.codexRequests, previous: previousRequests)
                 let fallbackActive = await scanner.activeCodexSessionStates()
+                let finishedByTranscript = await scanner.finishedCodexSessionActivities()
                 let recent = await scanner.recentCodexSessionIDs()
                 let sessions = pendingSessions.union(recent).union(fallbackActive.keys).filter { !$0.isEmpty }
                 var liveStates: [CodexLiveActivity] = []
@@ -98,7 +99,7 @@ public final class CodexObserver: AIObserverProtocol {
                     snapshot.state = .awaitingInput
                     snapshot.description = "Codex 正在等待操作"
                     snapshot.actionDetail = snapshot.codexRequests.first?.context
-                } else if let live = Self.aggregateLiveAndFallback(liveStates, fallback: fallbackActive) {
+                } else if let live = Self.aggregateLiveAndFallback(liveStates, fallback: fallbackActive, finished: finishedByTranscript) {
                     snapshot.state = live.state
                     snapshot.description = "Codex：\(live.state.title)"
                     snapshot.lastActiveDate = live.startedAt ?? snapshot.lastActiveDate
@@ -167,13 +168,29 @@ public final class CodexObserver: AIObserverProtocol {
         return result
     }
 
-    nonisolated static func aggregateLiveAndFallback(_ liveStates: [CodexLiveActivity], fallback: [String: AIState]) -> CodexLiveActivity? {
+    /// `finished` is what the transcripts say about sessions that have ended.
+    /// It does two things the desktop's answer cannot:
+    ///  - a finished session the desktop does not answer for still counts, so an
+    ///    old conversation it does answer for cannot stand in for "the newest
+    ///    result" (its date made a fresh completion look already viewed);
+    ///  - a completed session the desktop does answer for is dated by when it
+    ///    finished, not when its turn started, because "viewed" is judged
+    ///    against the finish.
+    nonisolated static func aggregateLiveAndFallback(_ liveStates: [CodexLiveActivity], fallback: [String: AIState],
+                                                     finished: [CodexLiveActivity] = []) -> CodexLiveActivity? {
         let authoritativeSessions = Set(liveStates.filter { $0.state != .unknown }.map(\.sessionID))
         let activeFallback = fallback.compactMap { session, state -> CodexLiveActivity? in
             guard !authoritativeSessions.contains(session), state == .running || state == .awaitingInput else { return nil }
             return .init(sessionID: session, turnID: nil, state: state, startedAt: nil)
         }
-        return aggregateLiveStates(liveStates + activeFallback)
+        let finishedAt = Dictionary(finished.compactMap { item in item.startedAt.map { (item.sessionID, $0) } },
+                                    uniquingKeysWith: max)
+        let dated = liveStates.map { live -> CodexLiveActivity in
+            guard live.state == .completed, let done = finishedAt[live.sessionID], done > (live.startedAt ?? .distantPast) else { return live }
+            var copy = live; copy.startedAt = done; return copy
+        }
+        let unseenByDesktop = finished.filter { !authoritativeSessions.contains($0.sessionID) && !fallback.keys.contains($0.sessionID) }
+        return aggregateLiveStates(dated + activeFallback + unseenByDesktop)
     }
 
     // Active work wins. Once inactive, show the newest turn, not the most severe

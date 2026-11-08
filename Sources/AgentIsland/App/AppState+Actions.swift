@@ -104,6 +104,7 @@ extension AppState {
     /// conversation actually runs in: its desktop app is taken to that very
     /// conversation, a terminal can only be brought forward.
     public func focusSession(_ row: AIObserverItem) {
+        openLogger.notice("focus requested: row=\(row.id.prefix(14), privacy: .public) icon=\(row.icon, privacy: .public) state=\(row.state.rawValue, privacy: .public)")
         if row.id.hasPrefix(Self.antigravitySessionPrefix) {
             let id = String(row.id.dropFirst(Self.antigravitySessionPrefix.count))
             let app = NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == "com.google.antigravity" }
@@ -145,6 +146,9 @@ extension AppState {
 
     private func openClaude(session: ClaudeSessionSnapshot?) {
         let target = Self.claudeOpenTarget(entrypoint: session?.entrypoint, state: session?.state ?? .idle)
+        // Every attempt leaves a line, including the ones that only bring a
+        // terminal forward and so never reach the desktop-app log below.
+        openLogger.notice("claude open requested: session=\(session?.id.prefix(8).description ?? "none", privacy: .public) entrypoint=\(session?.entrypoint ?? "nil", privacy: .public) state=\(session?.state.rawValue ?? "nil", privacy: .public) target=\(String(describing: target), privacy: .public) terminalRunning=\(Self.terminalAppRunning(), privacy: .public)")
         switch target {
         case .desktopNeedsInput, .desktopApp:
             openClaudeDesktopApp(target: target, transcriptID: session?.id)

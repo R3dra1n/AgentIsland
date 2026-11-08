@@ -500,6 +500,13 @@ public struct AISegmentView: View {
                     .help(secondaryHelp)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The name and state are a way into the conversation too. Only a
+            // finished row used to have a button for it, so a conversation that
+            // was still running (or one the user simply clicked on) had no way
+            // to be opened from here at all.
+            .contentShape(Rectangle())
+            .onTapGesture { onFocus?() }
+            .help("点击打开对应会话")
 
             actions
         }

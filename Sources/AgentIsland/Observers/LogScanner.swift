@@ -253,6 +253,27 @@ actor LogScanner {
         return result
     }
 
+    /// Sessions that have finished (completed, failed or interrupted, and not
+    /// yet faded back to idle), each dated by when the transcript says it
+    /// finished. The desktop only answers for the conversations it has open, so
+    /// without these a finished task it cannot see is invisible next to an old
+    /// one it can: the old one's date then stands for "the newest result".
+    func finishedCodexSessionActivities(now: Date = Date()) -> [CodexLiveActivity] {
+        guard source == "codex" else { return [] }
+        var result: [String: CodexLiveActivity] = [:]
+        func record(_ id: String, _ state: AIState, _ at: Date) {
+            guard UUID(uuidString: id) != nil, [.completed, .failed, .interrupted].contains(state) else { return }
+            if let existing = result[id], (existing.startedAt ?? .distantPast) >= at { return }
+            result[id] = .init(sessionID: id, turnID: nil, state: state, startedAt: at)
+        }
+        for (url, session) in sessions {
+            guard let id = sessionIDs[url], !hooks.hookedSessions.contains(id) else { continue }
+            record(id, session.visibleState(now: now), session.changedAt)
+        }
+        for (owner, session) in hooks.owners { record(owner.session, session.visibleState(now: now), session.changedAt) }
+        return Array(result.values)
+    }
+
     private func pendingCodexRequests() -> [CodexPendingRequest] {
         var requests: [CodexPendingRequest] = []
         if source == "codex" {

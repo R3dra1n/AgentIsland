@@ -43,6 +43,57 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([otherCompletion, ownCompletion], fallback: activeFallback)?.state, .completed)
     }
 
+    /// The 15:25 and 15:37 completions on 2026-11-08: the desktop answered only
+    /// for an old conversation, whose start date then stood for "the newest
+    /// result" and made the fresh completions look already viewed.
+    func testFinishedTaskTheDesktopCannotSeeBeatsAnOldOneItCan() {
+        let old = activity(.completed, second: -100_000, session: "old")
+        let fresh = activity(.completed, second: 500, session: "fresh")   // from the transcript, dated by its finish
+        let picked = CodexObserver.aggregateLiveAndFallback([old], fallback: [:], finished: [fresh])
+        XCTAssertEqual(picked?.sessionID, "fresh")
+        XCTAssertEqual(picked?.startedAt, fresh.startedAt)
+        // Without the transcripts' view, the old date is all there is (the bug).
+        XCTAssertEqual(CodexObserver.aggregateLiveAndFallback([old], fallback: [:])?.sessionID, "old")
+    }
+
+    func testCompletedSessionTheDesktopAnswersForIsDatedByItsFinish() {
+        let live = activity(.completed, second: 10, session: "a")          // turn started at +10
+        let finish = activity(.completed, second: 400, session: "a")       // finished at +400
+        let picked = CodexObserver.aggregateLiveAndFallback([live], fallback: [:], finished: [finish])
+        XCTAssertEqual(picked?.startedAt, now.addingTimeInterval(400))
+        // A mark taken while the task ran (+100) must not cover a result that came later.
+        XCTAssertFalse(AppState.viewMarkCovers(acknowledgedAt: now.addingTimeInterval(100), finishedAt: picked?.startedAt))
+    }
+
+    func testRunningWorkStillWinsOverFinishedTranscripts() {
+        let finished = [activity(.completed, second: 900, session: "done")]
+        let picked = CodexObserver.aggregateLiveAndFallback([activity(.completed, second: 1, session: "old")],
+                                                            fallback: ["busy": .running], finished: finished)
+        XCTAssertEqual(picked?.state, .running)
+    }
+
+    func testScannerListsFinishedSessionsWithTheirFinishTime() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let id = UUID().uuidString, finish = Date()
+        func stamp(_ date: Date) -> String { ISO8601DateFormatter().string(from: date) }
+        let events: [[String: Any]] = [
+            ["type": "session_meta", "payload": ["id": id]],
+            ["timestamp": stamp(finish.addingTimeInterval(-60)), "type": "event_msg", "payload": ["type": "task_started", "turn_id": "t"]],
+            ["timestamp": stamp(finish), "type": "event_msg", "payload": ["type": "task_complete", "turn_id": "t"]]
+        ]
+        var data = Data()
+        for event in events { data.append(try JSONSerialization.data(withJSONObject: event)); data.append(10) }
+        try data.write(to: root.appendingPathComponent("test.jsonl"))
+        let scanner = LogScanner(source: "codex", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        _ = await scanner.scan(now: finish)
+        let finished = await scanner.finishedCodexSessionActivities(now: finish)
+        XCTAssertEqual(finished.map(\.sessionID), [id])
+        XCTAssertEqual(finished.first?.state, .completed)
+        XCTAssertEqual(finished.first?.startedAt?.timeIntervalSince1970 ?? 0, finish.timeIntervalSince1970, accuracy: 1.5)
+    }
+
     func testQueuedAsyncQuestionSurvivesEmptyDesktopRequestListUntilLogResolvesIt() {
         let queued = CodexPendingRequest(sessionID: "a", turnID: "t", requestID: "q", isQuestion: true,
             context: "synthetic question", isAsynchronous: true)
