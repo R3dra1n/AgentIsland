@@ -3,7 +3,7 @@
 //
 //   swift scripts/make_app_icon.swift Resources/AppIcon.icns [preview.png]
 //
-// The icon is the product itself: the expanded black island with three status
+// The icon is the collapsed island: a black tile, a capsule, and three status
 // lights in the HUD's own colours (docs/hud-style.md). Everything is drawn from
 // numbers, so changing the design means changing this file and running it again.
 import AppKit
@@ -12,18 +12,15 @@ import AppKit
 
 let canvas: CGFloat = 1024
 let tile = CGRect(x: 100, y: 100, width: 824, height: 824)         // Apple's icon grid
-let island = CGRect(x: 192, y: 262, width: 640, height: 500)       // black body
-let islandRadius: CGFloat = 150
-let rowHeight: CGFloat = 116
-let rowGap: CGFloat = 22
-let rowInset: CGFloat = 34
-let dotRadius: CGFloat = 30
+let pill = CGRect(x: 172, y: 392, width: 680, height: 240)         // the collapsed island
+let dotRadius: CGFloat = 62
+let dotSpacing: CGFloat = 196
 
 // The HUD's lights: executing, finished, needs action.
-let rows: [(light: NSColor, bar: CGFloat)] = [
-    (NSColor(srgbRed: 1.000, green: 0.761, blue: 0.294, alpha: 1), 0.62),   // #FFC24B
-    (NSColor(srgbRed: 0.239, green: 0.863, blue: 0.518, alpha: 1), 0.46),   // #3DDC84
-    (NSColor(srgbRed: 1.000, green: 0.361, blue: 0.361, alpha: 1), 0.54),   // #FF5C5C
+let lights: [NSColor] = [
+    NSColor(srgbRed: 1.000, green: 0.761, blue: 0.294, alpha: 1),   // #FFC24B
+    NSColor(srgbRed: 0.239, green: 0.863, blue: 0.518, alpha: 1),   // #3DDC84
+    NSColor(srgbRed: 1.000, green: 0.361, blue: 0.361, alpha: 1),   // #FF5C5C
 ]
 
 // MARK: - Drawing
@@ -60,42 +57,32 @@ func draw(in ctx: CGContext) {
     ctx.addPath(squircle(in: tile)); ctx.setFillColor(NSColor.white.cgColor); ctx.fillPath()
     ctx.restoreGState()
 
-    // Tile: a cool light grey, so the black island is the one strong shape.
+    // Tile: black, with a faint lift at the top so it does not vanish on a dark Dock.
     ctx.saveGState()
     ctx.addPath(squircle(in: tile)); ctx.clip()
-    ctx.drawLinearGradient(gradient([NSColor(srgbRed: 0.965, green: 0.972, blue: 0.985, alpha: 1),
-                                     NSColor(srgbRed: 0.800, green: 0.824, blue: 0.870, alpha: 1)], [0, 1]),
+    ctx.drawLinearGradient(gradient([NSColor(srgbRed: 0.118, green: 0.122, blue: 0.145, alpha: 1),
+                                     NSColor(srgbRed: 0.000, green: 0.000, blue: 0.000, alpha: 1)], [0, 0.75]),
                            start: CGPoint(x: tile.midX, y: tile.maxY), end: CGPoint(x: tile.midX, y: tile.minY), options: [])
-    // A thin inner edge keeps the tile readable on a white background.
-    ctx.addPath(squircle(in: tile.insetBy(dx: 1.5, dy: 1.5)))
-    ctx.setStrokeColor(NSColor.black.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(3); ctx.strokePath()
     ctx.restoreGState()
-
-    // The island: pure black with the same soft shadow the HUD has.
     ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -26), blur: 50, color: NSColor.black.withAlphaComponent(0.42).cgColor)
-    ctx.addPath(roundedRect(island, islandRadius)); ctx.setFillColor(NSColor.black.cgColor); ctx.fillPath()
+    ctx.addPath(squircle(in: tile.insetBy(dx: 1.5, dy: 1.5)))
+    ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.16).cgColor); ctx.setLineWidth(3); ctx.strokePath()
     ctx.restoreGState()
 
-    // Rows, top to bottom, as in the expanded HUD.
-    let total = CGFloat(rows.count) * rowHeight + CGFloat(rows.count - 1) * rowGap
-    var top = island.midY + total / 2
-    for row in rows {
-        let r = CGRect(x: island.minX + rowInset, y: top - rowHeight, width: island.width - rowInset * 2, height: rowHeight)
-        ctx.addPath(roundedRect(r, 44)); ctx.setFillColor(NSColor.white.withAlphaComponent(0.07).cgColor); ctx.fillPath()
+    // The island: a capsule one step lighter than the tile.
+    ctx.addPath(roundedRect(pill, pill.height / 2))
+    ctx.setFillColor(NSColor(srgbRed: 0.055, green: 0.058, blue: 0.070, alpha: 1).cgColor); ctx.fillPath()
+    ctx.addPath(roundedRect(pill.insetBy(dx: 1.5, dy: 1.5), pill.height / 2 - 1.5))
+    ctx.setStrokeColor(NSColor.white.withAlphaComponent(0.10).cgColor); ctx.setLineWidth(3); ctx.strokePath()
 
-        let centre = CGPoint(x: r.minX + 62, y: r.midY)
-        ctx.saveGState()                                                // a faint glow, like the HUD's lights
-        ctx.setShadow(offset: .zero, blur: 26, color: row.light.withAlphaComponent(0.75).cgColor)
-        ctx.setFillColor(row.light.cgColor)
-        ctx.fillEllipse(in: CGRect(x: centre.x - dotRadius, y: centre.y - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
+    // Three lights, with the faint glow the HUD gives them.
+    for (i, light) in lights.enumerated() {
+        let c = CGPoint(x: pill.midX + CGFloat(i - 1) * dotSpacing, y: pill.midY)
+        ctx.saveGState()
+        ctx.setShadow(offset: .zero, blur: 46, color: light.withAlphaComponent(0.70).cgColor)
+        ctx.setFillColor(light.cgColor)
+        ctx.fillEllipse(in: CGRect(x: c.x - dotRadius, y: c.y - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
         ctx.restoreGState()
-
-        let barX = centre.x + dotRadius + 34
-        let barWidth = (r.maxX - 36 - barX) * row.bar
-        ctx.addPath(roundedRect(CGRect(x: barX, y: r.midY - 11, width: barWidth, height: 22), 11))
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.78).cgColor); ctx.fillPath()
-        top -= rowHeight + rowGap
     }
 }
 
