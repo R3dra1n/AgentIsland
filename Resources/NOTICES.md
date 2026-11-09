@@ -22,3 +22,6 @@ The icons identify third-party products. The software license does not grant
 ownership of their trademarks or imply endorsement by their owners.
 The previous unverified raster asset and custom Antigravity path copies are
 no longer included in the current source or release package.
+
+The AgentIsland app icon (AppIcon.icns) is original artwork drawn by
+scripts/make_app_icon.swift; it contains none of the third-party icons above.

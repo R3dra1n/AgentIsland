@@ -79,6 +79,7 @@ if [[ -d "$DIR/Resources" ]]; then
     cp -R "$DIR/Resources/"* "$APP/Contents/Resources/"
 fi
 cp "$DIR/LICENSE" "$APP/Contents/Resources/LICENSE"
+[[ -f "$APP/Contents/Resources/AppIcon.icns" ]] || { printf 'Missing Resources/AppIcon.icns (regenerate with scripts/make_app_icon.swift)\n' >&2; exit 1; }
 # The app needs no Python at run time, so none is bundled: the hook recorder and
 # its installer are native (AgentIslandHook).
 PLIST="$APP/Contents/Info.plist"
@@ -91,6 +92,7 @@ cat > "$PLIST" <<'PLIST'
 <key>CFBundleName</key><string>AgentIsland</string>
 <key>CFBundleDisplayName</key><string>placeholder</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundleShortVersionString</key><string>0.0.0</string>
 <key>CFBundleVersion</key><string>0</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>

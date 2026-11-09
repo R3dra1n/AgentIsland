@@ -95,9 +95,14 @@ final class CodexFirstPublishTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let id = UUID().uuidString.lowercased()
-        let lines = [#"{"timestamp":"2026-11-08T00:00:00.000Z","type":"session_meta","payload":{"id":"\#(id)"}}"#,
-                     #"{"timestamp":"2026-11-08T00:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}"#,
-                     #"{"timestamp":"2026-11-08T00:00:02.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}"#]
+        // Stamped relative to now: sessions older than `sessionWindow` are not shown,
+        // so a fixed date would make this test fail once it was a day old.
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let base = Date().addingTimeInterval(-60)
+        func stamp(_ offset: TimeInterval) -> String { formatter.string(from: base.addingTimeInterval(offset)) }
+        let lines = [#"{"timestamp":"\#(stamp(0))","type":"session_meta","payload":{"id":"\#(id)"}}"#,
+                     #"{"timestamp":"\#(stamp(1))","type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}"#,
+                     #"{"timestamp":"\#(stamp(2))","type":"event_msg","payload":{"type":"task_complete","turn_id":"t1"}}"#]
         try (lines.joined(separator: "\n") + "\n").write(to: root.appendingPathComponent("rollout-test.jsonl"), atomically: true, encoding: .utf8)
 
         let observer = CodexObserver(root: root)
