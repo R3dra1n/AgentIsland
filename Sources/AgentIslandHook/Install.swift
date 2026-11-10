@@ -12,6 +12,12 @@ enum NativeHookInstaller {
     static let claudeEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PermissionRequest", "PermissionDenied",
                                "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStop", "Stop", "StopFailure"]
 
+    /// The flag that makes the helper answer Claude's multiple-choice question
+    /// instead of recording an event (see `QuestionAnswering`).
+    static let answerQuestionsFlag = "--answer-questions"
+    /// How long Claude may wait on that hook; the helper itself waits less.
+    static let answerQuestionsTimeout = 30
+
     /// The registered command runs the recorder through this launcher. When the
     /// recorder file has gone (app deleted or updated without removing the
     /// hook), it exits 0 instead of failing: a hook that fails can make the
@@ -72,6 +78,8 @@ enum NativeHookInstaller {
         let nativeRoot = parts.count >= 5 && parts[parts.count - 3] == "native" && parts[parts.count - 4] == "hooks" && parts[parts.count - 5] == "AgentIsland"
         guard legacyRoot || nativeRoot, args.count >= 2, args[0] == "--source", args[1] == source else { return false }
         if source == "codex" { return args.count == 2 }
+        // The question-answering hook is registered by the same installer, so it is removed by it too.
+        if source == "claude", args.count == 3, args[2] == answerQuestionsFlag { return true }
         let events = source == "claude" ? claudeEvents : antigravityEvents
         return args.count == 4 && args[2] == "--event" && events.contains(args[3])
     }
@@ -171,6 +179,14 @@ enum NativeHookInstaller {
                 entries.append(["hooks": [["type": "command", "command": prefix + " --event " + event, "timeout": 1]]])
                 hooks[event] = entries
             }
+            // A second, separate registration so the island can answer a
+            // multiple-choice question. It matches that one tool only and has a
+            // longer timeout than the recorder, which must never hold anything up.
+            var preToolUse = hooks["PreToolUse"] as? [Any] ?? []
+            preToolUse.append(["matcher": "AskUserQuestion",
+                               "hooks": [["type": "command", "command": prefix + " " + answerQuestionsFlag,
+                                          "timeout": answerQuestionsTimeout]]])
+            hooks["PreToolUse"] = preToolUse
             output["hooks"] = hooks
             return output
         }

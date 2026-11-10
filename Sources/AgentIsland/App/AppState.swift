@@ -120,6 +120,14 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// but its "done" stays on screen until it is seen, and the row still has
     /// to know where to go when it is clicked.
     var lastKnownClaudeSession: ClaudeSessionSnapshot?
+    /// Multiple-choice questions Claude Code is waiting on that the island can
+    /// answer (see `ClaudeAnswerStore`). Empty unless the hook helper is installed.
+    @Published var claudeAnswerRequests: [ClaudeAnswerRequest] = []
+    /// Requests already answered here: hidden until their file is gone, so a
+    /// second click cannot send a second answer.
+    var claudeAnsweredRequestIDs: Set<String> = []
+    var claudeAnswerDirectory: URL = ClaudeAnswerStore.defaultDirectory
+    var claudeAnswerTimer: Timer?
     /// When the island itself last took the user to a Claude conversation. The
     /// app it brings forward announces its own activation a moment later, and
     /// that is not the user switching over to look at everything it hosts.
@@ -519,6 +527,9 @@ public final class AppState: ObservableObject, AIObserverDelegate {
             guard let self = self else { return }
             FloatingHUDWindowController.shared.setup(with: self)
             StatusItemPopoverController.shared.setup(with: self)
+            // Only the running app answers Claude's questions; a test process
+            // building an AppState must not tell the real hook helper someone is there.
+            if NSClassFromString("XCTestCase") == nil { self.startClaudeAnswering() }
         }
     }
 

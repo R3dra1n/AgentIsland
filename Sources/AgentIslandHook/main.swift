@@ -153,6 +153,15 @@ if CommandLine.arguments.contains("--install") || CommandLine.arguments.contains
         FileHandle.standardError.write(Data("AgentIsland hook configuration failed; existing configuration was not intentionally replaced.\n".utf8))
         exit(1)
     }
+} else if CommandLine.arguments.contains("--answer-questions") {
+    // Registered separately from the recorder, for Claude's AskUserQuestion only.
+    // Anything unexpected prints `{}`: no decision, Claude asks in its own dialog.
+    let directory = argument("--answers-directory").map { URL(fileURLWithPath: $0, isDirectory: true) } ?? QuestionAnswering.defaultDirectory
+    let wait = argument("--wait").flatMap(TimeInterval.init).map { min(max($0, 0), 60) } ?? QuestionAnswering.defaultWait
+    let reply = source == "claude" ? QuestionAnswering.readStandardInput().map {
+        QuestionAnswering.respond(to: $0, directory: directory, wait: wait)
+    } : nil
+    FileHandle.standardOutput.write(Data((reply ?? "{}\n").utf8))
 } else {
     let event = argument("--event")
     let path = argument("--directory").map { URL(fileURLWithPath: $0, isDirectory: true) }

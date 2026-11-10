@@ -13,7 +13,7 @@ AgentIslandHook --install   --source claude --output ~/.claude/settings.json
 AgentIslandHook --uninstall --source claude --output ~/.claude/settings.json
 ```
 
-安装会备份原配置，把记录器复制到 `~/Library/Application Support/AgentIsland/hooks/native/<内容哈希>/AgentIslandHook`，并注册 11 个事件：`SessionStart`、`SessionEnd`、`UserPromptSubmit`、`PermissionRequest`、`PermissionDenied`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`SubagentStop`、`Stop`、`StopFailure`。刻意不注册 `Notification`：它因多种互不相关的原因触发，会让状态变得不可判定。Claude Code 通过文件监看自动读取设置，不需要重启会话。
+安装会备份原配置，把记录器复制到 `~/Library/Application Support/AgentIsland/hooks/native/<内容哈希>/AgentIslandHook`，并注册 11 个事件（外加下面的「在灵动岛里回答选项」那一条）：`SessionStart`、`SessionEnd`、`UserPromptSubmit`、`PermissionRequest`、`PermissionDenied`、`PreToolUse`、`PostToolUse`、`PostToolUseFailure`、`SubagentStop`、`Stop`、`StopFailure`。刻意不注册 `Notification`：它因多种互不相关的原因触发，会让状态变得不可判定。Claude Code 通过文件监看自动读取设置，不需要重启会话。
 
 ### 不会动到其他工具的 Hook
 
@@ -21,7 +21,7 @@ AgentIslandHook --uninstall --source claude --output ~/.claude/settings.json
 
 ## 安全性
 
-- 记录器的 stdout 永远是 `{}`，退出码 0。依官方定义这是「成功但不做决定」，**记录器不会代你批准或拒绝任何操作**。
+- 记录器的 stdout 永远是 `{}`，退出码 0。依官方定义这是「成功但不做决定」，**记录器不会代你批准或拒绝任何操作**。唯一会做决定的是下面单独注册的回答模式，而且只在你亲手点了某个选项之后。
 - 只写白名单字段：事件名、会话与工具标识、回合标识、时间，以及 `PermissionRequest` 的命令 SHA-256 摘要。**不写命令原文、提示词和工具输入。**
 - 事件档 `~/Library/Application Support/AgentIsland/events/claude.jsonl` 权限 `0600`，目录 `0700`，写入时加锁并拒绝符号连结。
 
@@ -51,8 +51,33 @@ Claude Code 用 `prompt_id` 标识回合，归约器以 `turn_id` 为键，由�
 
 授权请求以会话为范围比对（会话记录的文件名就是会话 id），一个窗口的授权不会配到另一个窗口的命令上。超过 30 分钟仍未见解除的请求会被忽略，不会把悬浮窗永久钉在红色。
 
+## 在灵动岛里回答选项（1.3.16 起）
+
+Claude 的 `AskUserQuestion` 是它自己的对话框，外部没法替它按键（盲发按键选不了具体选项，也不保证落在对的窗口，1.3.4 起已取消）。官方给程序回答的办法是 PreToolUse Hook：返回 `permissionDecision: allow`，并在 `updatedInput` 里带上 `answers`（问题文字 → 所选选项的标签）。AgentIsland 用的就是这个。
+
+安装 Hook 时除了上面的记录器，还会另外注册一条：`PreToolUse`、`matcher` 为 `AskUserQuestion`、`timeout` 30 秒，命令是 `AgentIslandHook --source claude --answer-questions`。记录器那条仍是 1 秒，互不影响。
+
+流程：
+
+1. Claude 提问时，这条 Hook 先检查：只有**单个问题、单选**、选项 1 到 10 个、灵动岛正在运行、目录安全，才往下走；否则立刻输出 `{}`，Claude 照常弹自己的对话框。
+2. 它把问题写到 `~/Library/Application Support/AgentIsland/answers/requests/<工具调用 id>.json`，最多等 **20 秒**。灵动岛的行上这时出现「回答」按钮，点开列出选项。
+3. 你点了某个选项，灵动岛写 `responses/<id>.json`；Hook 读到后输出 `allow` 加 `answers`，Claude 把它当作你的回答继续。
+4. 20 秒内没点、灵动岛退出、答案不在选项里，一律输出 `{}`，回到 Claude 自己的对话框。
+
+安全与代价：
+
+- 目录 `0700`，请求与答案文件 `0600`，原子写入，拒绝符号连结，响应文件必须是本人写的普通文件；答案必须与提供的某个选项**逐字相同**，不接受自由文字。
+- 灵动岛运行时每秒更新 `answers/ready`；它超过 12 秒没更新（没运行或已退出），Hook 不会等，所以**没开灵动岛时 Claude 的提问不会延迟**。
+- 灵动岛开着但你没点时，Claude 自己的对话框要**晚 20 秒**才出现。这是这个办法无法避免的：对话框要等 Hook 返回才会弹出。
+- 多个问题、可多选、授权的批准／拒绝都不走这条路，仍然是「打开处理」回 Claude 里答。
+
+更新到带这条功能的版本后，需要在设置里重新「配置 Claude Code Hook…」一次（重复安装会替换旧条目，不会累加）。
+
+已用真实的 Claude Code 验证：在桌面应用同款的 stream-json 协议下，Hook 给出答案后工具结果是「已回答」，Claude 回复所选项，且宿主（等同桌面应用的界面）没有被询问；不带这条 Hook 的对照里宿主会被询问；灵动岛没运行时宿主在 0.1 秒内被询问。**没有**在你自己的桌面应用里点过真实的灵动岛。
+
 ## 测试
 
+- `Tests/test_answer_questions.py`：直接执行真实二进制，覆盖回答、不该等的情形立刻放行、不在选项里的答案或他人可写的响应被忽略、符号连结、越界的工具调用 id、安装与卸载。
 - `Tests/test_native_hook.py`：直接执行真实二进制，覆盖追加不干扰他人、重复安装不累加且卸载完全还原、不移除 `--source` 不同的同名命令、记录器对 `PermissionDenied`／`StopFailure`／`prompt_id` 的转译及只写摘要。
 - `Tests/AgentIslandTests/ClaudeHookStateTests.swift`、`ClaudeSessionTests.swift`：授权的产生与解除、回合状态、会话范围隔离、过期、多会话扫描与缓存。
 

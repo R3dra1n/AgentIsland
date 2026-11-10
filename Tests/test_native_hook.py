@@ -185,7 +185,10 @@ class NativeHookTests(unittest.TestCase):
             theirs = [c for c in commands if '--source claude' not in c[1]]
             self.assertEqual(sorted(theirs), sorted(self.claude_commands(original)))
             self.assertEqual(after['theme'], 'dark')
-            self.assertEqual(sorted(e for e, _ in mine), sorted(self.CLAUDE_EVENTS))
+            # The event recorders, plus one more PreToolUse registration: the one that
+            # lets the island answer Claude's question (see test_answer_questions.py).
+            self.assertEqual(sorted(e for e, _ in mine), sorted(self.CLAUDE_EVENTS + ['PreToolUse']))
+            self.assertEqual(len([c for e, c in mine if '--answer-questions' in c]), 1)
             # Notification is deliberately never registered.
             self.assertNotIn('Notification', [e for e, _ in mine])
             # A group carrying another tool's matcher must survive untouched.

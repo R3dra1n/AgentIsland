@@ -470,11 +470,18 @@ public struct AISegmentView: View {
                 // response can only pass if the controller revalidates it.
                 presentedQuestion = question
             }
+        } else if opensHostToHandle, let request = claudeAnswerRequest {
+            ClaudeAnswerPopover(request: request, itemName: item.name) { index in
+                showDetail = false
+                appState.answerClaude(request, optionIndex: index)
+            }
         } else if opensHostToHandle {
             VStack(alignment: .leading, spacing: 5) {
                 ActionDetailPopover(detail: detail, itemName: item.name, supportsFreeText: false,
                                     showsDisabledActions: true, onChoose: nil, onSend: nil)
                 Text("灵动岛没法替 Claude 点选项：按键选不了具体选项，还可能送到别的窗口。请点「打开处理」回到 Claude，在对应会话里回答。")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+                Text("要在灵动岛里直接选，需要安装 Claude Hook（设置 → 可选 Hook），且只支持单选的单个问题。")
                     .font(.system(size: 10)).foregroundColor(.secondary)
             }
         } else {
@@ -511,8 +518,15 @@ public struct AISegmentView: View {
         return item.description
     }
 
+    /// Claude's multiple-choice question, when the hook helper handed it to the
+    /// island and it can be answered here. Anything else is answered in Claude.
+    private var claudeAnswerRequest: ClaudeAnswerRequest? {
+        opensHostToHandle ? appState.claudeAnswerRequest(forRow: item) : nil
+    }
+
     private var approveTitle: String {
         if isCodex { return "处理请求" }
+        if claudeAnswerRequest != nil { return "回答" }
         return (isAntigravity || opensHostToHandle || ["cursor", "windsurf", "trae"].contains(item.id)) ? "打开处理" : "帮我批准"
     }
 
@@ -578,7 +592,7 @@ public struct AISegmentView: View {
                         .buttonStyle(HUDPillButtonStyle(primary: false))
                 }
 
-                Button(approveTitle) { if isCodex { toggleDetail() } else { onApprove?() } }
+                Button(approveTitle) { if isCodex || claudeAnswerRequest != nil { toggleDetail() } else { onApprove?() } }
                     .buttonStyle(HUDPillButtonStyle(primary: true))
             }
             .disabled(isCodex && appState.codexActionInFlight)
@@ -601,6 +615,56 @@ private struct ActionDetailContentHeightKey: PreferenceKey {
 }
 
 /// A popover view showing the detailed action context for an AI awaiting input
+/// Claude's multiple-choice question with one button per option. Choosing one
+/// hands it to the hook helper, which gives it to Claude as the user's answer.
+struct ClaudeAnswerPopover: View {
+    let request: ClaudeAnswerRequest
+    let itemName: String
+    let onChoose: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.circle.fill").foregroundColor(.orange).font(.system(size: 14))
+                Text("\(itemName) 在等你回答").font(.system(size: 12, weight: .bold))
+            }
+            Divider()
+            if let header = request.header, !header.isEmpty {
+                Text(header).font(.system(size: 10, weight: .medium)).foregroundColor(.secondary)
+            }
+            Text(request.question)
+                .font(.system(size: 12, weight: .semibold))
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(request.options.enumerated()), id: \.offset) { index, option in
+                        Button(action: { onChoose(index) }) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(option.label).font(.system(size: 12, weight: .medium))
+                                if let description = option.description, !description.isEmpty {
+                                    Text(description).font(.system(size: 10)).foregroundColor(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 5).padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("选择：\(option.label)")
+                    }
+                }
+            }
+            .frame(maxHeight: 280)
+            Text("约 20 秒内不选，Claude 会回到原窗口自己提问。")
+                .font(.system(size: 10)).foregroundColor(.secondary)
+        }
+        .padding(12)
+        .frame(width: 320)
+    }
+}
+
 struct ActionDetailPopover: View {
     let detail: String
     let itemName: String
