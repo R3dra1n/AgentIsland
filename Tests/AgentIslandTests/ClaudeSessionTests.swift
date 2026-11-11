@@ -472,12 +472,14 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
         XCTAssertFalse(viewed(state, "done"), "going to look at one conversation is not looking at the finished one")
     }
 
-    func testTheUserSwitchingToTheAppStillViewsWhatItHosts() {
-        // Nothing was opened by the island, so this is the user's own doing.
+    func testTheUserSwitchingToTheAppViewsTheConversationOnScreenOnly() {
+        // Nothing was opened by the island, so this is the user's own doing. They
+        // land on one conversation; the other, which finished behind it, is not seen.
         let state = makeState([session("a", .completed), session("b", .completed)])
         state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle, now: Date(),
-                                                               focusedDesktopTranscript: { nil })
-        XCTAssertTrue(viewed(state, "a") && viewed(state, "b"))
+                                                               focusedDesktopTranscript: { "a" })
+        XCTAssertTrue(viewed(state, "a"))
+        XCTAssertFalse(viewed(state, "b"))
     }
 
     func testTheIslandsOwnActivationIsOnlyIgnoredForAMoment() {
@@ -488,7 +490,7 @@ final class ClaudeOpeningMarksOnlyThatConversationTests: XCTestCase {
         // Well after the island's own switch, coming back to the app is the user's.
         state.acknowledgeClaudeConversationsViewedByActivating(frontName: desktop.name, frontBundle: desktop.bundle,
                                                                now: opened.addingTimeInterval(AppState.ownActivationWindow + 1),
-                                                               focusedDesktopTranscript: { nil })
+                                                               focusedDesktopTranscript: { "b" })
         XCTAssertTrue(viewed(state, "b"))
         XCTAssertFalse(AppState.isOwnActivation(openedAt: nil, now: Date()))
         XCTAssertTrue(AppState.isOwnActivation(openedAt: opened, now: opened.addingTimeInterval(1)))
@@ -567,11 +569,26 @@ final class ClaudeBackgroundCompletionTests: XCTestCase {
         XCTAssertEqual(viewed, ["on-screen"])
     }
 
-    func testWithoutAnyFocusRecordEveryFinishedOneCountsAsBefore() {
+    func testWhenTheAppCannotSayWhichIsOnScreenNothingIsAssumedSeen() {
+        // Marking every conversation the app hosts made one that finished behind
+        // the one on screen disappear without anyone having looked at it.
         let sessions = [finished("a"), finished("b")]
         let viewed = AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: desktop.name,
                                                                frontBundle: desktop.bundle, focusedDesktopTranscript: nil)
-        XCTAssertEqual(Set(viewed), ["a", "b"])
+        XCTAssertEqual(viewed, [])
+    }
+
+    func testCodexInFrontIsNotATerminalOrAnEditor() {
+        // "Codex" contains "Code". Someone working in it has not looked at the Claude
+        // conversations that finished in a terminal.
+        let sessions = [finished("t1", entry: "cli"), finished("t2", entry: "claude-vscode")]
+        for front in [("Codex", "com.openai.codex"), ("ChatGPT", "com.openai.chat")] {
+            XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: front.0,
+                                                                     frontBundle: front.1, focusedDesktopTranscript: nil), [], front.0)
+        }
+        // A real editor or terminal still counts.
+        XCTAssertEqual(Set(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:], frontName: "Code",
+                                                                     frontBundle: "com.microsoft.VSCode", focusedDesktopTranscript: nil)), ["t1", "t2"])
     }
 
     func testTheFocusRecordSaysNothingAboutTerminals() {

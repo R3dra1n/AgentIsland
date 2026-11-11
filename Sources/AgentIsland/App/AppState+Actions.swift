@@ -202,7 +202,7 @@ extension AppState {
         acknowledgeClaudeSession(session.id)
         // Nothing live to mark, but a "done" is still showing for the
         // conversation that just finished (see `claudeSessionToOpen`).
-        if claudeSessions.isEmpty, claudeNeedsAck { acknowledgeClaude() }
+        if claudeSessions.isEmpty, claudeNeedsAck { acknowledgeClaude(reason: "opened with nothing live") }
     }
 
     private func openClaude(session: ClaudeSessionSnapshot?) {
@@ -394,7 +394,7 @@ extension AppState {
 
     /// Acknowledges one finished conversation. The provider-level completion is
     /// only cleared once no conversation is left that still needs attention.
-    func acknowledgeClaudeSession(_ id: String) {
+    func acknowledgeClaudeSession(_ id: String, reason: String = "row") {
         guard let session = claudeSessions.first(where: { $0.id == id }), session.state == .completed,
               let completion = session.completedAt ?? session.lastActiveDate else { return }
         claudeAcknowledgedSessions[id] = max(Date(), completion)
@@ -403,13 +403,28 @@ extension AppState {
             guard session.state == .completed else { return false }
             return (claudeAcknowledgedSessions[session.id] ?? .distantPast) < (session.completedAt ?? session.lastActiveDate ?? .distantFuture)
         }
-        if !stillActive { acknowledgeClaude() }
+        // Who was marked viewed, and why, so that a "done" that disappeared
+        // without anybody looking can be traced (the marks themselves carry no reason).
+        openLogger.notice("claude viewed: session=\(id.prefix(8), privacy: .public) reason=\(reason, privacy: .public) othersStillWaiting=\(stillActive, privacy: .public) all=\(Self.claudeSessionSummary(self.claudeSessions), privacy: .public)")
+        if !stillActive { acknowledgeClaude(reason: "last waiting conversation was marked (\(reason))") }
     }
 
-    public func acknowledgeClaude() {
+    func logClaudeActivation(front: String, onScreen: String?, viewed: [String]) {
+        openLogger.notice("claude viewed by front app: front=\(front, privacy: .public) onScreen=\(onScreen.map { String($0.prefix(8)) } ?? "unknown", privacy: .public) marking=\(viewed.map { String($0.prefix(8)) }.joined(separator: ","), privacy: .public) all=\(Self.claudeSessionSummary(self.claudeSessions), privacy: .public)")
+    }
+
+    /// `id8:state` for each conversation, for the log. Ids are shortened; no content.
+    nonisolated static func claudeSessionSummary(_ sessions: [ClaudeSessionSnapshot]) -> String {
+        sessions.map { "\($0.id.prefix(8)):\($0.state.rawValue)" }.joined(separator: ",")
+    }
+
+    public func acknowledgeClaude() { acknowledgeClaude(reason: "button") }
+
+    func acknowledgeClaude(reason: String) {
         if testModeActive { stopTest(); return }
         lastAcknowledgedDates["claude"] = Date()
         // Acknowledging the provider acknowledges everything it has finished.
+        openLogger.notice("claude viewed ALL: reason=\(reason, privacy: .public) sessions=\(Self.claudeSessionSummary(self.claudeSessions), privacy: .public)")
         for session in claudeSessions where session.state == .completed {
             claudeAcknowledgedSessions[session.id] = max(Date(), session.completedAt ?? session.lastActiveDate ?? Date())
         }

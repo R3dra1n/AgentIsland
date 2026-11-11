@@ -324,11 +324,11 @@ final class ClaudeMostRelevantSessionTests: XCTestCase {
                         session("cli-done", .completed, "cli")]
         // A second conversation is still running: the finished one is still viewed.
         XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
-            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop"), ["desk-done"])
+            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop", focusedDesktopTranscript: "desk-done"), ["desk-done"])
         XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
             frontName: "Terminal", frontBundle: "com.apple.Terminal"), ["cli-done"])
         XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: ["desk-done": t],
-            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop"), [])
+            frontName: "Claude", frontBundle: "com.anthropic.claudefordesktop", focusedDesktopTranscript: "desk-done"), [])
         XCTAssertEqual(AppState.claudeSessionsViewedByActivating(sessions: sessions, acknowledged: [:],
             frontName: "Safari", frontBundle: "com.apple.Safari"), [])
     }

@@ -628,7 +628,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         // used to leave a finished one waiting for a click.
         acknowledgeClaudeConversationsViewedByActivating(frontName: name, frontBundle: bundleId, now: Date())
         if claudeSessions.isEmpty, claudeNeedsAck, !finishedJustNow, isAppActive(name: name, bundleId: bundleId, for: "claude") {
-            acknowledgeClaude()
+            acknowledgeClaude(reason: "front app, nothing live")
         }
     }
 
@@ -656,10 +656,16 @@ public final class AppState: ObservableObject, AIObserverDelegate {
         let desktopFront = frontBundle.localizedCaseInsensitiveContains("anthropic") || frontName.localizedCaseInsensitiveContains("Claude")
         let waiting = claudeSessions.contains { $0.state == .completed && ($0.entrypoint ?? "").localizedCaseInsensitiveContains("desktop") }
         let focused = desktopFront && waiting ? focusedDesktopTranscript() : nil
-        for id in Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
-                                                        frontName: frontName, frontBundle: frontBundle,
-                                                        focusedDesktopTranscript: focused) {
-            acknowledgeClaudeSession(id)
+        let viewed = Self.claudeSessionsViewedByActivating(sessions: claudeSessions, acknowledged: claudeAcknowledgedSessions,
+                                                           frontName: frontName, frontBundle: frontBundle,
+                                                           focusedDesktopTranscript: focused)
+        if !viewed.isEmpty {
+            // `focused=nil` with the desktop app in front means the app could not say which
+            // conversation is on screen, and every finished one it hosts counts.
+            logClaudeActivation(front: frontBundle, onScreen: focused, viewed: viewed)
+        }
+        for id in viewed {
+            acknowledgeClaudeSession(id, reason: "front app")
         }
     }
 
@@ -667,8 +673,7 @@ public final class AppState: ObservableObject, AIObserverDelegate {
     /// focused most recently, as the id its transcript carries. The app rewrites
     /// a conversation's file when it is focused, so the newest few files are
     /// enough; only the focus time and the two ids are read. Nil when nothing
-    /// can be told, in which case every finished conversation the app hosts
-    /// counts, as it did before this was known.
+    /// can be told, in which case no conversation the app hosts is assumed seen.
     nonisolated static func claudeDesktopFocusedTranscript(root: URL = claudeDesktopSessionsRoot, newest: Int = 16) -> String? {
         let fm = FileManager.default
         var files: [(url: URL, modified: Date)] = []
@@ -702,7 +707,11 @@ public final class AppState: ObservableObject, AIObserverDelegate {
                                                              frontName: String, frontBundle: String,
                                                              focusedDesktopTranscript: String? = nil) -> [String] {
         let desktopFront = frontBundle.localizedCaseInsensitiveContains("anthropic") || frontName.localizedCaseInsensitiveContains("Claude")
-        let terminalFront = !desktopFront && (frontName.localizedCaseInsensitiveContains("Terminal") || frontName.localizedCaseInsensitiveContains("iTerm")
+        // Codex's name contains "Code", which is not an editor or a terminal: someone
+        // working in it has not looked at the Claude conversations running elsewhere.
+        let codexFront = frontBundle.localizedCaseInsensitiveContains("openai") || frontName.localizedCaseInsensitiveContains("Codex")
+            || frontName.localizedCaseInsensitiveContains("ChatGPT")
+        let terminalFront = !desktopFront && !codexFront && (frontName.localizedCaseInsensitiveContains("Terminal") || frontName.localizedCaseInsensitiveContains("iTerm")
             || frontName.localizedCaseInsensitiveContains("Ghostty") || frontName.localizedCaseInsensitiveContains("Warp")
             || frontBundle.localizedCaseInsensitiveContains("cursor") || frontBundle.localizedCaseInsensitiveContains("vscode")
             || frontName.localizedCaseInsensitiveContains("Code"))
@@ -713,9 +722,12 @@ public final class AppState: ObservableObject, AIObserverDelegate {
             if let finished, (acknowledged[session.id] ?? .distantPast) >= finished { return nil }
             let onDesktop = (session.entrypoint ?? "").localizedCaseInsensitiveContains("desktop")
             guard onDesktop == desktopFront else { return nil }
-            // With the desktop app in front and the conversation on screen
-            // known, only that one is being looked at.
-            if desktopFront, let focused = focusedDesktopTranscript, session.id != focused { return nil }
+            // With the desktop app in front, only the conversation on screen is
+            // being looked at. When the app cannot say which that is, nothing is
+            // assumed seen: marking every conversation it hosts made one that
+            // finished behind the one on screen disappear unseen. The cost of the
+            // opposite mistake is a green the user has to click away.
+            if desktopFront, session.id != focusedDesktopTranscript { return nil }
             return session.id
         }
     }

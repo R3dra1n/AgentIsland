@@ -67,7 +67,7 @@ public struct FloatingHUDView: View {
                     appState.acknowledgeAntigravitySession(String(item.id.dropFirst(AppState.antigravitySessionPrefix.count)))
                 }
                 else if provider == "antigravity" { appState.acknowledgeAntigravity() }
-                else if provider == "claude" { appState.acknowledgeClaude() }
+                else if provider == "claude" { appState.acknowledgeClaude(reason: "island row button") }
             })
     }
 
