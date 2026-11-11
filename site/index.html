@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentIsland · AI 编程助手的灵动岛</title>
+<meta name="description" content="macOS 上的 AI 编程助手状态悬浮窗：一粒黑色胶囊，收起时是状态灯，需要你时自动展开。支持 Codex、Antigravity、Claude Code。">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="AgentIsland · AI 编程助手的灵动岛">
+<meta property="og:description" content="一粒会变形的状态胶囊：收起时看状态，需要你时自动展开。">
+<meta property="og:image" content="https://agentisland.hellohsu.com/assets/overview.png">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#f6f5f2; --bg2:#ffffff; --ink:#111114; --ink2:#55565e; --line:#e2e0da;
+  --capsule:#000; --capsule-line:#26262b; --row:#101012; --row-ink:#f4f4f6; --row-dim:#9a9ba3;
+  --red:#ff5c5c; --yellow:#ffc24b; --green:#3ddc84; --grey:#6b6c75;
+  --accent:#111114; --accent-ink:#fff; --shadow:0 30px 60px -28px rgba(0,0,0,.45);
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#08080a; --bg2:#101013; --ink:#f3f3f5; --ink2:#a0a1a9; --line:#222228;
+    --capsule-line:#2c2c32; --row:#131316;
+    --accent:#f3f3f5; --accent-ink:#08080a; --shadow:0 30px 60px -28px rgba(0,0,0,.9);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#08080a; --bg2:#101013; --ink:#f3f3f5; --ink2:#a0a1a9; --line:#222228;
+  --capsule-line:#2c2c32; --row:#131316;
+  --accent:#f3f3f5; --accent-ink:#08080a; --shadow:0 30px 60px -28px rgba(0,0,0,.9);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.65 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.wrap{max-width:1080px;margin:0 auto;padding:0 max(20px,env(safe-area-inset-left))}
+.wrap{padding-right:max(20px,env(safe-area-inset-right))}
+
+/* nav */
+header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:saturate(1.4) blur(14px);-webkit-backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
+.nav{display:flex;align-items:center;gap:20px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:-.01em;text-decoration:none}
+.brand svg{width:30px;height:30px;border-radius:8px}
+.nav nav{margin-left:auto;display:flex;gap:22px;font-size:14px;color:var(--ink2)}
+.nav nav a{text-decoration:none}
+.nav nav a:hover{color:var(--ink)}
+@media(max-width:640px){.nav nav a.opt{display:none}.nav nav{gap:16px}}
+
+/* hero */
+.hero{padding-top:72px;padding-bottom:40px;text-align:center}
+.eyebrow{display:inline-flex;gap:8px;align-items:center;font:500 13px var(--mono);color:var(--ink2);border:1px solid var(--line);padding:6px 12px;border-radius:99px;background:var(--bg2)}
+h1{font-size:clamp(34px,6.4vw,64px);line-height:1.08;letter-spacing:-.035em;margin:22px 0 18px;font-weight:700}
+.lede{max-width:600px;margin:0 auto;color:var(--ink2);font-size:clamp(16px,2.2vw,19px)}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:99px;font-weight:600;text-decoration:none;font-size:15px;border:1px solid var(--line);background:var(--bg2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn:focus-visible,a:focus-visible,button:focus-visible{outline:2px solid var(--yellow);outline-offset:3px}
+.fine{margin-top:16px;font-size:13px;color:var(--ink2)}
+
+/* live capsule */
+.stage{position:relative;height:330px;margin:42px auto 0;max-width:760px;display:flex;justify-content:center;align-items:flex-start}
+.stage::before{content:"";position:absolute;inset:-40px 0 auto;height:200px;background:radial-gradient(60% 100% at 50% 0,color-mix(in srgb,var(--glow,var(--grey)) 22%,transparent),transparent 70%);transition:background 1.2s;pointer-events:none}
+.caps{position:relative;background:var(--capsule);border:1px solid var(--capsule-line);border-radius:36px;box-shadow:var(--shadow),0 0 0 1px rgba(255,255,255,.02) inset;overflow:hidden;width:150px;height:56px;
+  transition:width .7s cubic-bezier(.3,1.35,.5,1),height .7s cubic-bezier(.3,1.35,.5,1),border-radius .7s,box-shadow 1s,border-color 1s}
+.caps[data-edge="red"]{border-color:color-mix(in srgb,var(--red) 70%,#000);box-shadow:var(--shadow),0 0 28px -4px color-mix(in srgb,var(--red) 55%,transparent)}
+.caps[data-edge="green"]{border-color:color-mix(in srgb,var(--green) 70%,#000);box-shadow:var(--shadow),0 0 28px -4px color-mix(in srgb,var(--green) 45%,transparent)}
+.caps[data-edge="yellow"]{border-color:color-mix(in srgb,var(--yellow) 60%,#000)}
+.dots{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:16px;transition:opacity .35s .15s}
+.dot{width:14px;height:14px;border-radius:50%;background:var(--grey);transition:background .6s}
+.dot[data-c="red"]{background:var(--red);animation:breathe 1.8s ease-in-out infinite}
+.dot[data-c="yellow"]{background:var(--yellow);animation:breathe 2.6s ease-in-out infinite}
+.dot[data-c="green"]{background:var(--green)}
+@keyframes breathe{50%{opacity:.45;transform:scale(.88)}}
+.rows{position:absolute;inset:0;padding:10px;display:flex;flex-direction:column;gap:8px;opacity:0;transition:opacity .25s}
+.caps.open{width:min(560px,92vw);height:274px;border-radius:30px}
+.caps.open .dots{opacity:0;transition:opacity .15s}
+.caps.open .rows{opacity:1;transition:opacity .4s .25s}
+.row{flex:1;display:flex;align-items:center;gap:12px;padding:0 14px;border-radius:20px;background:var(--row);color:var(--row-ink);text-align:left;min-height:0}
+.row.red{background:#26130f}
+.row i{width:11px;height:11px;border-radius:50%;flex:none;background:var(--grey)}
+.row.red i{background:var(--red)} .row.yellow i{background:var(--yellow)} .row.green i{background:var(--green)}
+.row b{display:block;font-size:15px;line-height:1.25}
+.row small{display:block;color:var(--row-dim);font-size:13px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .t{min-width:0;flex:1}
+.pill{flex:none;font:600 13px var(--sans);padding:7px 14px;border-radius:99px;background:#2b2b30;color:#e8e8ea;border:0}
+.pill.w{background:#fff;color:#000}
+.legend{display:flex;justify-content:center;gap:10px 22px;flex-wrap:wrap;margin-top:8px;font-size:14px;color:var(--ink2)}
+.legend span{display:inline-flex;align-items:center;gap:8px}
+.legend i{width:10px;height:10px;border-radius:50%}
+.demo-note{text-align:center;font-size:12.5px;color:var(--ink2);margin-top:14px}
+@media(max-width:560px){.stage{height:310px}.pill{padding:6px 11px}.row{padding:0 10px;gap:9px}}
+
+/* sections */
+section{padding:84px 0}
+.kicker{font:500 13px var(--mono);color:var(--ink2);letter-spacing:.02em}
+h2{font-size:clamp(26px,4vw,40px);line-height:1.15;letter-spacing:-.03em;margin:10px 0 14px}
+.sub{color:var(--ink2);max-width:620px;margin:0}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:40px}
+@media(max-width:900px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.grid{grid-template-columns:1fr}}
+.card{background:var(--bg2);border:1px solid var(--line);border-radius:22px;padding:24px}
+.card h3{margin:14px 0 6px;font-size:17px;letter-spacing:-.01em}
+.card p{margin:0;color:var(--ink2);font-size:14.5px}
+.mini{height:38px;display:flex;align-items:center;gap:7px;padding:0 14px;border-radius:99px;background:var(--capsule);border:1px solid var(--capsule-line);width:max-content}
+.mini i{width:9px;height:9px;border-radius:50%}
+.mini span{color:#e8e8ea;font-size:12px;font-weight:600;margin-left:3px}
+.shots{display:grid;grid-template-columns:1.15fr 1fr;gap:16px;margin-top:40px}
+@media(max-width:800px){.shots{grid-template-columns:1fr}}
+.shot{background:var(--bg2);border:1px solid var(--line);border-radius:22px;overflow:hidden}
+.shot img{display:block;width:100%;height:auto}
+.shot figcaption{padding:14px 18px;font-size:13.5px;color:var(--ink2);border-top:1px solid var(--line)}
+.shot.wide{grid-column:1/-1}
+
+/* table */
+.tablewrap{margin-top:36px;border:1px solid var(--line);border-radius:22px;overflow:hidden;background:var(--bg2)}
+table{width:100%;border-collapse:collapse;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:16px 20px;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+th{font:500 12.5px var(--mono);color:var(--ink2)}
+td:first-child{font-weight:650;white-space:nowrap}
+td small{display:block;color:var(--ink2);font-size:13px;margin-top:4px}
+.tag{display:inline-block;font:500 11.5px var(--mono);padding:2px 8px;border-radius:99px;border:1px solid var(--line);color:var(--ink2);margin-left:8px;vertical-align:1px}
+@media(max-width:700px){thead{display:none}tr{display:block;padding:14px 4px;border-bottom:1px solid var(--line)}tr:last-child{border:0}td{display:block;border:0;padding:3px 16px}td:first-child{white-space:normal}}
+
+/* install */
+.steps{counter-reset:s;display:grid;gap:14px;margin-top:36px;padding:0;list-style:none}
+.steps li{counter-increment:s;display:flex;gap:18px;background:var(--bg2);border:1px solid var(--line);border-radius:20px;padding:20px 22px}
+.steps li::before{content:counter(s);flex:none;width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center;font:600 14px var(--mono)}
+.steps b{display:block;margin-bottom:2px}
+.steps span{color:var(--ink2);font-size:14.5px}
+code{font:13px var(--mono);background:color-mix(in srgb,var(--ink) 8%,transparent);padding:2px 6px;border-radius:6px}
+.honest{margin-top:22px;border:1px dashed var(--line);border-radius:20px;padding:20px 22px;color:var(--ink2);font-size:14.5px}
+.honest b{color:var(--ink)}
+.honest ul{margin:8px 0 0;padding-left:20px}
+footer{border-top:1px solid var(--line);padding:36px 0 56px;color:var(--ink2);font-size:13.5px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;justify-content:space-between}
+footer p{margin:0;max-width:640px}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="AgentIsland 首页">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#0b0b0d"/><rect x="8" y="22" width="48" height="20" rx="10" fill="#000" stroke="#26262b"/><circle cx="21" cy="32" r="4.6" fill="#ffc24b"/><circle cx="32" cy="32" r="4.6" fill="#3ddc84"/><circle cx="43" cy="32" r="4.6" fill="#ff5c5c"/></svg>
+      AgentIsland
+    </a>
+    <nav aria-label="页面导航">
+      <a class="opt" href="#features">功能</a>
+      <a class="opt" href="#support">支持范围</a>
+      <a href="#install">安装</a>
+      <a href="https://github.com/R3dra1n/AgentIsland">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<div class="wrap hero">
+  <span class="eyebrow"><span aria-hidden="true">●</span> macOS 14+ · 开发者预览</span>
+  <h1>一粒胶囊，<br>看清所有 AI 编程助手</h1>
+  <p class="lede">AgentIsland 是 macOS 上的灵动岛式状态悬浮窗。收起时只是几颗状态灯，助手需要你、或者做完了，它自己展开，你不用再一个个窗口去翻。</p>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/R3dra1n/AgentIsland/releases">下载预发布版</a>
+    <a class="btn" href="https://github.com/R3dra1n/AgentIsland">查看源码</a>
+  </div>
+  <p class="fine">Apple Silicon · 临时签名、未公证（首次打开需手动允许）· 界面为中文 · MIT 开源</p>
+
+  <div class="stage" aria-label="胶囊演示：循环展示收起和展开两种形态">
+    <div class="caps" id="caps" data-edge="none" role="img" aria-label="AgentIsland 胶囊的动画示意">
+      <div class="dots" id="dots"><span class="dot" data-c="yellow"></span><span class="dot" data-c="grey"></span><span class="dot" data-c="yellow"></span></div>
+      <div class="rows" id="rows" aria-hidden="true">
+        <div class="row green"><i></i><div class="t"><b>Codex</b><small>测试已通过，改动已就绪</small></div><span class="pill">待命</span><span class="pill w">打开</span></div>
+        <div class="row yellow"><i></i><div class="t"><b>Antigravity</b><small>正在整理需求</small></div></div>
+        <div class="row red"><i></i><div class="t"><b>Claude</b><small>要运行 swift build，是否允许？</small></div><span class="pill">拒绝</span><span class="pill w">帮我批准</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="legend" aria-label="状态颜色说明">
+    <span><i style="background:var(--red)"></i>需要你处理</span>
+    <span><i style="background:var(--yellow)"></i>执行中</span>
+    <span><i style="background:var(--green)"></i>已完成</span>
+    <span><i style="background:var(--grey)"></i>待命</span>
+  </div>
+  <p class="demo-note">示意动画，助手名称与内容均为虚构的演示数据。</p>
+</div>
+
+<section id="features">
+<div class="wrap">
+  <div class="kicker">它做什么</div>
+  <h2>平时不打扰，该你的时候才出现</h2>
+  <p class="sub">同时开着几个 AI 助手、几个会话，最麻烦的是不知道谁在等你。AgentIsland 只回答一个问题：现在有没有东西需要我看。</p>
+  <div class="grid">
+    <article class="card">
+      <div class="mini"><i style="background:var(--yellow)"></i><i style="background:var(--grey)"></i><i style="background:var(--green)"></i></div>
+      <h3>收起时只是状态灯</h3>
+      <p>每个会话一个点，同一助手开两个会话就是两个点，各有各的颜色。执行中的缓缓呼吸，已完成的不会被另一个执行中的盖住。</p>
+    </article>
+    <article class="card">
+      <div class="mini"><i style="background:var(--red)"></i><span>需操作</span></div>
+      <h3>需要你时自动展开</h3>
+      <p>有会话在等你（红）或做完了还没看（绿），胶囊展开成行列表。点胶囊可手动收起，收起过的那几项不会再弹出，直到有新的。</p>
+    </article>
+    <article class="card">
+      <div class="mini"><i style="background:var(--green)"></i><span>帮我批准</span></div>
+      <h3>能确认是谁时，直接在岛上回复</h3>
+      <p>Codex 的文本回复和一次性审批、Antigravity 的后台回复，可以不切窗口直接做。无法确认目标会话时，只给「打开」，不乱发。</p>
+    </article>
+    <article class="card">
+      <div class="mini"><i style="background:var(--green)"></i><span>已查看</span></div>
+      <h3>看过的消失，没看的留着</h3>
+      <p>完成的提示一直保留到你看过那个对话。多个对话窗口各记各的，看了第一个，第二个的提示还在。</p>
+    </article>
+    <article class="card">
+      <div class="mini"><i style="background:var(--yellow)"></i><span>执行中</span><i style="background:var(--grey);margin-left:6px"></i><span>待命</span></div>
+      <h3>菜单栏里也能扫一眼</h3>
+      <p>每个助手一格：图标、状态点、状态文字。胶囊收起或隐藏时，看菜单栏就知道谁在忙、谁做完了。三项都可单独关闭。</p>
+    </article>
+    <article class="card">
+      <div class="mini"><i style="background:var(--grey)"></i><span>本机</span></div>
+      <h3>数据留在你的 Mac 上</h3>
+      <p>读本机的会话日志和可选 Hook 事件来判断状态；没有分析数据上传，Hook 只保存白名单字段，不存提示词和命令正文。</p>
+    </article>
+  </div>
+</div>
+</section>
+
+<section style="padding-top:20px">
+<div class="wrap">
+  <div class="kicker">长什么样</div>
+  <h2>黑色胶囊，几种形态</h2>
+  <p class="sub">展开成行列表，或收起成图标、圆点，也可以竖着排。边缘有一圈细光：红色呼吸，黄色、绿色常亮，全部待命时是淡白。</p>
+  <div class="shots">
+    <figure class="shot wide" style="margin:0"><img src="assets/overview.png" width="1600" height="1080" loading="lazy" alt="AgentIsland 概览：展开的行列表，以及收起时的图标、圆点和直列形态"><figcaption>展开的行列表，以及收起后的图标、圆点和直列形态（示意画面，内容为虚构）。</figcaption></figure>
+    <figure class="shot" style="margin:0"><img src="assets/hud-story.gif" width="800" loading="lazy" alt="一边看视频，Codex 完成了：胶囊从屏幕上方弹出，点「打开」直接切到 Codex 窗口"><figcaption>你在看视频，Codex 做完了：胶囊自己弹出来，点「打开」切到它的窗口，胶囊随即收回。桌面与视频为合成画面，胶囊是应用的真实渲染。</figcaption></figure>
+    <figure class="shot" style="margin:0"><img src="assets/menubar.png" width="1560" height="760" loading="lazy" alt="菜单栏状态条在深色与浅色菜单栏上的几种状态"><figcaption>菜单栏状态条：全部待命、执行中、已完成、需操作，深浅两种菜单栏。</figcaption></figure>
+  </div>
+</div>
+</section>
+
+<section id="support" style="padding-top:20px">
+<div class="wrap">
+  <div class="kicker">支持范围</div>
+  <h2>哪些助手能用，能做到哪一步</h2>
+  <p class="sub">这是预发布版。下面是已经验证过的，以及还没验证的。</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>助手</th><th>能力</th><th>限制</th></tr></thead>
+    <tbody>
+      <tr><td>Codex Desktop</td><td>状态、问题、文本回复、一次性审批</td><td>依赖非公开的本机通信，桌面端版本变化后需要重新验证。只保留最新回合里未回答的问题。</td></tr>
+      <tr><td>Antigravity</td><td>状态、问题展示、后台回复</td><td>依赖未公开接口，仅限桌面版 2.27.0、2.28.0、2.28.2、2.29.0。文字回复没有独立样本，更多环境仍待验证。</td></tr>
+      <tr><td>Claude Code <span class="tag">实验性</span></td><td>状态、问题（含真实文字与选项）；装了可选 Hook 后可靠显示等待授权，并可在岛上回答单选问题</td><td>从会话记录读取状态，没有 Hook 时判断不了是否在等待授权。多个问题、可多选和命令授权，仍回 Claude 里处理。</td></tr>
+      <tr><td>Cursor · Windsurf · Trae <span class="tag">实验性</span></td><td>状态监控</td><td>各助手能力不同，未完成独立验收。</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+</section>
+
+<section id="install" style="padding-top:20px">
+<div class="wrap">
+  <div class="kicker">安装</div>
+  <h2>下载、解压、放进 Applications</h2>
+  <p class="sub">需要 macOS 14 或更新版本，目前只提供 Apple Silicon（arm64）安装包。</p>
+  <ol class="steps">
+    <li><div><b>从 Releases 下载</b><span>把 zip 和同名的 <code>.sha256</code> 放在同一目录，运行 <code>shasum -a 256 -c</code> 核对，显示 OK 再继续。</span></div></li>
+    <li><div><b>解压后放进 Applications</b><span>更新时不要直接覆盖旧版：先把旧的改名为 <code>AgentIsland.previous.日期.app</code>，确认新版正常再删。</span></div></li>
+    <li><div><b>首次打开需要手动允许</b><span>安装包是临时签名、没有经过 Apple 公证，系统会提示无法验证开发者。确认来源后，到「系统设置 → 隐私与安全性」里允许打开；不要为此全局关闭 Gatekeeper。</span></div></li>
+    <li><div><b>按需授权，再在设置里打开要监控的助手</b><span>辅助功能权限是可选的，用于点击原窗口后自动确认「已查看」。没有它，状态监控照常可用。新装的版本里 Claude 默认关闭，需要在设置里打开。</span></div></li>
+  </ol>
+  <div class="honest">
+    <b>先说清楚几件没做到的事：</b>
+    <ul>
+      <li>没有在干净的机器上验证过全新安装流程，多会话也只在单台 Mac 上做过有限验证。</li>
+      <li>临时签名意味着每次更新后，辅助功能授权很可能需要移除后重新添加。</li>
+      <li>只有 Apple Silicon 版本，没有 Intel 或通用包。</li>
+      <li>Codex、Antigravity 依赖未公开的接口，对方更新后可能失效；此时状态监控可能还在，回复会暂停。</li>
+    </ul>
+  </div>
+</div>
+</section>
+
+<section style="padding-top:20px">
+<div class="wrap">
+  <div class="kicker">隐私</div>
+  <h2>它读什么，不读什么</h2>
+  <p class="sub">为了判断状态，AgentIsland 在本机读取已启用助手的日志、Hook 事件和部分辅助功能界面，会在悬浮窗里显示问题和命令。会话内容只在内存里解析，不写入日志、不上传；目前没有任何分析数据上传服务。屏幕共享时悬浮窗也可能被看到，请留意。完整说明见 <a href="https://github.com/R3dra1n/AgentIsland/blob/main/PRIVACY.md">隐私说明</a>。</p>
+</div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>AgentIsland 以 <a href="https://github.com/R3dra1n/AgentIsland/blob/main/LICENSE">MIT 许可</a> 开源。助手图标来自 <a href="https://github.com/lobehub/lobe-icons">LobeHub/lobe-icons</a>（MIT），仅用于识别对应产品。Codex／OpenAI、Claude／Anthropic、Cursor、Antigravity／Google、Windsurf、Trae 的名称与商标归各自所有者，本项目与它们没有关联，也未获其认可。</p>
+    <p><a href="https://github.com/R3dra1n/AgentIsland">GitHub</a> · <a href="https://github.com/R3dra1n/AgentIsland/issues">反馈问题</a> · <a href="https://github.com/R3dra1n/AgentIsland/releases">Releases</a></p>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var caps=document.getElementById('caps'), dots=[].slice.call(document.querySelectorAll('#dots .dot')), stage=document.querySelector('.stage');
+  var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // 每一幕：圆点颜色、边缘光、是否展开、停留毫秒
+  var scenes=[
+    {c:['yellow','grey','yellow'],edge:'yellow',open:false,ms:2600},
+    {c:['green','yellow','red'],edge:'red',open:true,ms:4600},
+    {c:['green','grey','grey'],edge:'green',open:false,ms:2600},
+    {c:['grey','grey','grey'],edge:'none',open:false,ms:2400}
+  ];
+  var glow={red:'var(--red)',green:'var(--green)',yellow:'var(--yellow)',none:'var(--grey)'};
+  var i=0, timer;
+  function show(s){
+    dots.forEach(function(d,k){d.dataset.c=s.c[k]});
+    caps.dataset.edge=s.edge; stage.style.setProperty('--glow',glow[s.edge]);
+    caps.classList.toggle('open',s.open);
+    document.getElementById('rows').setAttribute('aria-hidden',s.open?'false':'true');
+  }
+  if(reduce){ show(scenes[1]); return; }
+  function step(){ var s=scenes[i%scenes.length]; show(s); i++; timer=setTimeout(step,s.ms); }
+  step();
+  document.addEventListener('visibilitychange',function(){ if(document.hidden){clearTimeout(timer)} else {clearTimeout(timer);step()} });
+})();
+</script>
+</body>
+</html>
