@@ -89,10 +89,13 @@ server.serve_forever()
         }
 
         deinit {
-            for server in servers {
-                if server.isRunning { server.terminate() }
-                server.waitUntilExit()
-            }
+            // Ask, wait a moment, then insist: a server that ignored the
+            // request once left the whole test run waiting here for ever.
+            for server in servers where server.isRunning { server.terminate() }
+            let deadline = Date().addingTimeInterval(3)
+            while servers.contains(where: \.isRunning), Date() < deadline { usleep(20_000) }
+            for server in servers where server.isRunning { kill(server.processIdentifier, SIGKILL) }
+            for server in servers { server.waitUntilExit() }
             try? FileManager.default.removeItem(at: directory)
         }
 

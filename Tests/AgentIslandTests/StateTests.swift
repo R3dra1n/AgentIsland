@@ -217,8 +217,9 @@ final class StateTests: XCTestCase {
 
     func testAntigravityScannerChangesIdentityForIdenticalQuestionInAnotherSession() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let firstFolder = root.appendingPathComponent("first")
-        let secondFolder = root.appendingPathComponent("second")
+        // Where Antigravity writes a conversation's transcript.
+        let firstFolder = LogScanner.antigravityTranscript(root: root, conversation: "first").deletingLastPathComponent()
+        let secondFolder = LogScanner.antigravityTranscript(root: root, conversation: "second").deletingLastPathComponent()
         try FileManager.default.createDirectory(at: firstFolder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let event = Data("{\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"tool_calls\":[{\"name\":\"ask_question\",\"args\":{\"questions\":[{\"question\":\"Choose\",\"options\":[\"A\"]}]}}]}\n".utf8)
@@ -288,7 +289,7 @@ final class StateTests: XCTestCase {
         let now = Date()
         let formatter = ISO8601DateFormatter()
         func writeQuestion(_ name: String, _ date: Date) throws -> URL {
-            let dir = root.appendingPathComponent(UUID().uuidString).appendingPathComponent("one").appendingPathComponent("two")
+            let dir = LogScanner.antigravityTranscript(root: root, conversation: UUID().uuidString).deletingLastPathComponent()
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let event: [String: Any] = ["type": "PLANNER_RESPONSE", "status": "DONE", "timestamp": formatter.string(from: date),
                 "tool_calls": [["name": "ask_question", "args": ["questions": [["question": name, "options": ["A"]]]]]]]

@@ -242,16 +242,11 @@ struct HUDDotView: View {
     }
 
     var body: some View {
-        // A running light breathes (opacity 1 -> 0.45, scale 1 -> 0.8). The
-        // phase comes from the clock, and the timeline only ticks while running,
-        // so a standby HUD does no work at all.
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !shouldPulse)) { context in
-            let phase = shouldPulse ? HUDStyle.pulsePhase(at: context.date.timeIntervalSinceReferenceDate) : 0
-            light
-                .opacity(1 - (1 - HUDStyle.pulseOpacity) * phase)
-                .scaleEffect(1 - (1 - HUDStyle.pulseScale) * CGFloat(phase))
-        }
-        .accessibilityLabel(state.title)
+        // A running light breathes (opacity 1 -> 0.45, scale 1 -> 0.8), played
+        // by Core Animation: see `BreathingView` for why not a timeline.
+        BreathingView(active: shouldPulse) { light }
+            .accessibilityElement()
+            .accessibilityLabel(state.title)
     }
 }
 
@@ -811,15 +806,19 @@ struct HUDGlowView: View {
     var body: some View {
         let hex = HUDStyle.glowHex(for: state)
         let animated = state == .awaitingInput && !reduceMotion
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !animated)) { context in
-            let phase = animated ? HUDStyle.pulsePhase(at: context.date.timeIntervalSinceReferenceDate) : 0
+        // Drawn at its brightest; the breath dims the whole rim, halo included.
+        // The halo reaches past the rim, so the breathing layer is given that
+        // much room and then laid back over the capsule.
+        BreathingView(active: animated, lowOpacity: HUDStyle.glowBreathLowOpacity, lowScale: 1, fills: true) {
             shape
-                .strokeBorder(hex.map { HUDStyle.color(hex: $0, opacity: HUDStyle.glowOpacity(for: state, phase: phase)) }
+                .strokeBorder(hex.map { HUDStyle.color(hex: $0, opacity: HUDStyle.glowOpacity(for: state, phase: 0)) }
                               ?? Color.white.opacity(HUDStyle.glowIdleOpacity),
                               lineWidth: hex == nil ? 1 : 1.5)
-                .shadow(color: HUDStyle.color(hex: HUDStyle.redHex, opacity: HUDStyle.glowShadowOpacity(for: state, phase: phase)), radius: 10)
+                .shadow(color: HUDStyle.color(hex: HUDStyle.redHex, opacity: HUDStyle.glowShadowOpacity(for: state, phase: 0)), radius: HUDStyle.glowHaloRadius)
+                .padding(HUDStyle.glowHaloRoom)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state)
         }
+        .padding(-HUDStyle.glowHaloRoom)
         .allowsHitTesting(false)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: state)
     }
 }

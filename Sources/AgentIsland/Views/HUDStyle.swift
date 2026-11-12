@@ -113,6 +113,12 @@ enum HUDStyle {
     static func glowShadowOpacity(for state: AIState, phase: Double) -> Double {
         state == .awaitingInput ? 0.6 - 0.4 * phase : 0
     }
+    /// The red rim breathes as one layer: at the bottom of a breath the whole
+    /// of it is at this fraction of its brightest (rim 0.95 -> 0.45).
+    static let glowBreathLowOpacity: Double = 0.45 / 0.95
+    static let glowHaloRadius: CGFloat = 10
+    /// Room around the rim for the halo, so its layer does not cut it off.
+    static let glowHaloRoom: CGFloat = 24
 
     /// Size of the whole window content for a capsule of `capsule`.
     static func windowSize(for capsule: CGSize) -> CGSize {

@@ -153,9 +153,67 @@ final class AntigravitySessionSnapshotTests: XCTestCase {
         let now = Date(), scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
         let before = await scanner.scan(now: now)
         XCTAssertTrue(before.antigravitySessions.isEmpty)
-        try write([question("New session", date: now)], to: transcript(root, UUID().uuidString))
+        try write([question("New session", date: now)], to: standard(root, UUID().uuidString))   // where Antigravity writes them
         let after = await scanner.scan(now: now.addingTimeInterval(2.1))
         XCTAssertEqual(after.antigravitySessions.count, 1)
         XCTAssertEqual(after.antigravitySessions.first?.state, .awaitingInput)
+    }
+
+    // MARK: Finding transcripts without walking every file
+
+    private func standard(_ root: URL, _ id: String) -> URL {
+        LogScanner.antigravityTranscript(root: root, conversation: id)
+    }
+
+    func testANewConversationAtTheUsualPlaceIsFoundWithinSeconds() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        try write([question("First", date: now)], to: standard(root, UUID().uuidString))
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let before = await scanner.scan(now: now)
+        XCTAssertEqual(before.antigravitySessions.count, 1)
+        // Well inside the minute between full walks.
+        try write([question("Second", date: now)], to: standard(root, UUID().uuidString))
+        let after = await scanner.scan(now: now.addingTimeInterval(3))
+        XCTAssertEqual(after.antigravitySessions.count, 2)
+    }
+
+    func testTheQuickLookDoesNotRereadATranscriptTheFullWalkFound() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date(), id = UUID().uuidString
+        try write([question("Only once", date: now)], to: standard(root, id))
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        let full = await scanner.scan(now: now)                          // full walk
+        let quick = await scanner.scan(now: now.addingTimeInterval(3))   // quick look
+        let fullAgain = await scanner.scan(now: now.addingTimeInterval(LogScanner.fullDiscoveryInterval + 4))
+        // Read from the start again, the question would be a new request each
+        // time and its identity (which a reply is checked against) would change.
+        XCTAssertEqual(full.antigravitySessions.map(\.id), quick.antigravitySessions.map(\.id))
+        XCTAssertNotNil(full.antigravityPendingIdentity)
+        XCTAssertEqual(full.antigravityPendingIdentity, quick.antigravityPendingIdentity)
+        XCTAssertEqual(full.antigravityPendingIdentity, fullAgain.antigravityPendingIdentity)
+        XCTAssertEqual(quick.antigravityPendingSessions, 1)
+    }
+
+    func testATranscriptSomewhereElseIsStillFoundByTheFullWalkAndKept() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        try write([question("Usual", date: now)], to: standard(root, UUID().uuidString))
+        let scanner = LogScanner(source: "antigravity", root: root, hookURL: root.appendingPathComponent("no-hooks"))
+        _ = await scanner.scan(now: now)
+        let elsewhere = transcript(root, UUID().uuidString)   // not where Antigravity puts them today
+        try write([question("Elsewhere", date: now)], to: elsewhere)
+        let quick = await scanner.scan(now: now.addingTimeInterval(3))
+        XCTAssertEqual(quick.antigravitySessions.count, 1, "the quick look only checks the usual place")
+        let full = await scanner.scan(now: now.addingTimeInterval(LogScanner.fullDiscoveryInterval + 1))
+        XCTAssertEqual(full.antigravitySessions.count, 2, "the full walk finds it")
+        let kept = await scanner.scan(now: now.addingTimeInterval(LogScanner.fullDiscoveryInterval + 5))
+        XCTAssertEqual(kept.antigravitySessions.count, 2, "and the next quick look does not drop it")
+        try FileManager.default.removeItem(at: elsewhere)
+        let gone = await scanner.scan(now: now.addingTimeInterval(LogScanner.fullDiscoveryInterval + 9))
+        XCTAssertEqual(gone.antigravitySessions.count, 1, "a deleted one goes at once")
     }
 }

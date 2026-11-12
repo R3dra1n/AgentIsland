@@ -13,6 +13,14 @@ actor LogScanner {
     private var sessionIDs: [URL: String] = [:]
     private let hookURL: URL
     private var lastDiscovery = Date.distantPast
+    private var lastFullDiscovery = Date.distantPast
+    static let fullDiscoveryInterval: TimeInterval = 60
+
+    /// Where Antigravity writes a conversation's transcript.
+    static func antigravityTranscript(root: URL, conversation: String) -> URL {
+        root.resolvingSymlinksInPath().appendingPathComponent(conversation)
+            .appendingPathComponent(".system_generated/logs/transcript.jsonl")
+    }
 
     init(source: String, root: URL, hookURL: URL? = nil) {
         self.source = source; self.root = root
@@ -38,16 +46,34 @@ actor LogScanner {
         // are still read on every poll. Keep other providers' cadence intact.
         let discoveryInterval: TimeInterval = source == "antigravity" ? 2 : 5
         if now.timeIntervalSince(lastDiscovery) >= discoveryInterval {
-            guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: source == "antigravity" ? [] : [.skipsHiddenFiles], errorHandler: { _, _ in true }) else {
-                return ObserverSnapshot(state: .idle, description: "日志目录不可读取", lastActiveDate: nil)
+            // Do not resurrect all historical sessions on startup. Retain monitored sessions.
+            func monitored(_ url: URL) -> Bool {
+                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]), values.isRegularFile == true else { return false }
+                return readers[url] != nil || now.timeIntervalSince(values.contentModificationDate ?? .distantPast) < 86400
             }
-            candidates = enumerator.compactMap { item -> URL? in
-                guard let url = item as? URL else { return nil }
-                guard source == "codex" ? url.pathExtension == "jsonl" : url.lastPathComponent == "transcript.jsonl" else { return nil }
-                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]), values.isRegularFile == true else { return nil }
-                // Do not resurrect all historical sessions on startup. Retain monitored sessions.
-                guard readers[url] != nil || now.timeIntervalSince(values.contentModificationDate ?? .distantPast) < 86400 else { return nil }
-                return url
+            // Antigravity keeps every transcript at one fixed place under its
+            // conversation's directory, next to thousands of other files. Walking
+            // all of them every 2 s was most of this app's idle CPU, so look only
+            // where transcripts are; a full walk still runs once a minute in case
+            // a later version puts them somewhere else.
+            if source == "antigravity", now.timeIntervalSince(lastFullDiscovery) < Self.fullDiscoveryInterval,
+               let names = try? fm.contentsOfDirectory(atPath: root.path) {
+                let resolved = root.resolvingSymlinksInPath()
+                let standard = Set(names.map { Self.antigravityTranscript(root: resolved, conversation: $0) })
+                // Keep what a full walk found elsewhere until the next full walk.
+                candidates = candidates.filter { !standard.contains($0) && monitored($0) } + standard.filter(monitored)
+            } else {
+                guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: source == "antigravity" ? [] : [.skipsHiddenFiles], errorHandler: { _, _ in true }) else {
+                    return ObserverSnapshot(state: .idle, description: "日志目录不可读取", lastActiveDate: nil)
+                }
+                candidates = enumerator.compactMap { item -> URL? in
+                    guard var url = item as? URL else { return nil }
+                    guard source == "codex" ? url.pathExtension == "jsonl" : url.lastPathComponent == "transcript.jsonl" else { return nil }
+                    // One spelling per file, whichever way it was found.
+                    if source == "antigravity" { url = url.resolvingSymlinksInPath() }
+                    return monitored(url) ? url : nil
+                }
+                lastFullDiscovery = now
             }
             let present = Set(candidates)
             readers = readers.filter { present.contains($0.key) }

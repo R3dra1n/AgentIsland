@@ -34,6 +34,15 @@ final class HUDLogoClickTests: XCTestCase {
     private func scenario(icons: Bool) async {
         _ = NSApplication.shared
         let state = AppState()
+        // Claude is off until the user turns it on, and its rows are only shown
+        // while it is on. This used to rely on whatever an earlier run had left
+        // in the test runner's preferences. Put back what was there afterwards.
+        let hadClaudeEnabled = UserDefaults.standard.object(forKey: "claudeEnabled")
+        defer {
+            if let hadClaudeEnabled { UserDefaults.standard.set(hadClaudeEnabled, forKey: "claudeEnabled") }
+            else { UserDefaults.standard.removeObject(forKey: "claudeEnabled") }
+        }
+        state.claudeEnabled = true
         // The app's own observers read the real home directory; only what this
         // test sets may be shown.
         [state.codexObserver as any AIObserverProtocol, state.antigravityObserver, state.claudeObserver,
@@ -50,12 +59,18 @@ final class HUDLogoClickTests: XCTestCase {
         let recorder = Recorder()
         let hud = FloatingHUDView(appState: state, onContentSizeChange: { recorder.sizes.append($0) },
                                   onFocusRow: { recorder.focused.append($0.id) })
-        let host = NSHostingView(rootView: hud)
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.windowSize), styleMask: .borderless,
-                              backing: .buffered, defer: false)
+        // The same kind of window and hosting view as the real island
+        // (`FloatingHUDWindowController.setup`): a panel that does not activate
+        // the app takes clicks while another app is in front. An ordinary
+        // window swallows the first click to become key, so this test only
+        // passed when the test runner happened to be the front app.
+        let host = DraggableHostingView(rootView: hud)
+        let window = NSPanel(contentRect: NSRect(origin: .zero, size: Self.windowSize), styleMask: [.borderless, .nonactivatingPanel],
+                             backing: .buffered, defer: false)
+        window.isFloatingPanel = true
         window.contentView = host
         host.frame = NSRect(origin: .zero, size: Self.windowSize)
-        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
         defer { window.orderOut(nil) }
         await pump(0.4)
 
