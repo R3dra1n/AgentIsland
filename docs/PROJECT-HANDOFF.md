@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | 构建 | `bash scripts/build_app.sh` | `bash scripts/build_isolated_preview.sh` |
 | bundle id | `io.github.r3dra1n.AgentIsland` | `local.agentisland.isolatedpreview` |
-| 显示版本 | `1.3.14` | `1.3.14-preview` |
+| 显示版本 | `1.3.18` | `1.3.18-preview` |
 | 输出 | `build-output/release/` | `build-output/preview/` |
 | 偏好、进程锁 | 正常位置 | 独立的偏好域；锁在临时目录；窗口标有「隔离测试版」 |
 | 用途 | 日常使用 | 测试，可与正式版同时运行 |

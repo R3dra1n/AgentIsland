@@ -459,26 +459,6 @@ final class CodexRegressionTests: XCTestCase {
         XCTAssertTrue(result.codexRequests.isEmpty)
     }
 
-    func testCommandMatchingRejectsTextAndPersistentGrants() {
-        XCTAssertTrue(CodexActionMatch.isDecisionButton(role: "AXButton", label: "Allow once", enabled: true, approve: true))
-        XCTAssertTrue(CodexActionMatch.isDecisionButton(role: "AXButton", label: "允许一次 ⌘↵", enabled: true, approve: true))
-        XCTAssertFalse(CodexActionMatch.isDecisionButton(role: "AXStaticText", label: "Allow", enabled: true, approve: true))
-        XCTAssertFalse(CodexActionMatch.isDecisionButton(role: "AXButton", label: "Always allow", enabled: true, approve: true))
-        XCTAssertFalse(CodexActionMatch.isDecisionButton(role: "AXButton", label: "Run tests in background", enabled: true, approve: true))
-        XCTAssertFalse(CodexActionMatch.isDecisionButton(role: "AXButton", label: "Allow", enabled: false, approve: true))
-        XCTAssertFalse(CodexActionMatch.isDecisionButton(role: "AXButton", label: "Submit", enabled: true, approve: true))
-    }
-
-    func testCommandDigestMustMatchExactDisplayedCommand() {
-        let command = "echo hello"
-        let digest = SHA256.hash(data: Data(command.utf8)).map { String(format: "%02x", $0) }.joined()
-        let request = CodexPendingRequest(sessionID: "s", turnID: "t", requestID: "r", isQuestion: false, context: nil, commandDigest: digest)
-        XCTAssertTrue(CodexActionMatch.matchesRequest(request, texts: ["echo hello", "Allow once"]))
-        XCTAssertFalse(CodexActionMatch.matchesRequest(request, texts: ["echo other", "Allow once"]))
-        XCTAssertFalse(CodexActionMatch.matchesRequest(request, texts: ["echo hello; rm file"]))
-        XCTAssertFalse(CodexActionMatch.matchesRequest(request, texts: ["ECHO hello"]))
-        XCTAssertFalse(CodexActionMatch.matchesRequest(request, texts: ["echo  hello"]))
-    }
     func testLiveCandidatesIncludeRunningSessionWithoutQuestion() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

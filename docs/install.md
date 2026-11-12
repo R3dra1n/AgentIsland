@@ -15,14 +15,15 @@ shasum -a 256 -c AgentIsland-1.3.3-macOS-arm64.zip.sha256
 
 ## 安装与更新
 
-1. 校验后双击解压，把 `AgentIsland.app` 放到 Applications（或你原来放的位置）。
+1. 校验后双击解压，把 `AgentIsland.app` 放到 Applications（或你原来放的位置）。1.3.18 起另有同名的 `.dmg`：打开后把 AgentIsland 拖到旁边的 Applications 即可，内容与 ZIP 相同，同样未公证，有自己的 `.sha256`。
 2. **更新时不要直接覆盖旧版**：先把旧的 `AgentIsland.app` 改名为 `AgentIsland.previous.<日期>.app`，确认新版正常再决定是否删除，需要回退时改回名字即可。
 3. 如系统提示无法验证开发者，确认文件来源后参考 [Apple 打开安全设置说明](https://support.apple.com/en-us/102445)，不要全局关闭 Gatekeeper。
 4. **辅助功能授权在每次更新后很可能失效。** 临时签名的身份是这一份二进制的哈希，换了新版就是另一个身份。请在「系统设置 → 隐私与安全性 → 辅助功能」里先用「−」移除旧的 AgentIsland，再用「+」添加新的并重新打开应用。没有辅助功能权限时，状态监控仍可用，但点击原窗口自动确认完成、部分后台操作会不可用。若有稳定的代码签名身份，构建时设置 `AGENTISLAND_SIGN_IDENTITY` 可以避免这一步。
 5. Codex 通信使用原生 IPC。Codex、Antigravity、Claude Code 的可选 Hook 都提供原生配置入口和记录器，不要求用户安装 Python。
 6. Antigravity 的后台回复属于实验功能，仅允许 2.27.0、2.28.0、2.28.2、2.29.0。首次后台回复需同意读取本机临时令牌，可在设置中撤销；命令审批、会话归属或回复结果不明确时请回 Antigravity 处理。
 7. 「Antigravity 提前验证问题」默认关闭。单独开启后，会在问题出现时查询本机会话以减少面板等待，并能在服务器确认问题已不再等待时清掉已结束的提醒；它不会自动提交回复，可随时关闭。
-8. 新装的版本使用独立的偏好域，Claude 默认关闭，需要在设置里打开；Antigravity 的后台回复授权需要重新同意。
+8. 想让它开机后自己启动，在设置的「通知与集成」里打开「登录时自动启动」（1.3.18 起）。它登记在系统的「系统设置 → 通用 → 登录项」里，可在那里查看或移除；应用换了位置或更新后，如果不再自动启动，把开关关掉再打开一次。
+9. 新装的版本使用独立的偏好域，Claude 默认关闭，需要在设置里打开；Antigravity 的后台回复授权需要重新同意。
 
 两个渠道可同时运行：正式版的 bundle id 是 `io.github.r3dra1n.AgentIsland`（1.3.1 及更早是 `com.antigravity.AgentIsland`，首次启动会把普通设置迁移过来，授权类设置不迁移，需要重新同意），隔离预览是 `local.agentisland.isolatedpreview`，窗口上标有「隔离测试版」，偏好与进程锁互相独立。
 

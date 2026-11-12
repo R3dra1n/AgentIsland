@@ -1,6 +1,4 @@
 import AppKit
-import ApplicationServices
-import CryptoKit
 
 /// Codex has its own action path. Never fall back to another app, keyboard input,
 /// a coordinate click, or a persistent permission decision.
@@ -66,63 +64,3 @@ enum CodexActionController {
     }
 
 }
-
-/// Pure matching rules shared with regression tests.
-enum CodexActionMatch {
-    static func normalized(_ text: String) -> String {
-        text.split(whereSeparator: \.isWhitespace).joined(separator: " ").lowercased()
-    }
-
-    static func isDecisionButton(role: String, label: String, enabled: Bool, approve: Bool, isQuestion: Bool = false) -> Bool {
-        guard enabled else { return false }
-        // Accept both traditional buttons and text/group roles that act as option items in ChatGPT's UI
-        guard role == kAXButtonRole else { return false }
-        let title = normalized(label).replacingOccurrences(of: "[\\s⌘⌥⇧⌃↩↵⏎]+$", with: "", options: .regularExpression)
-        
-        if isQuestion {
-            if approve {
-                return title.hasPrefix("1 ") || title == "1" || title.contains("批准") || title.contains("发送") || title.contains("确认") || title.contains("approve") || title.contains("send") || title.contains("confirm")
-            } else {
-                return title.hasPrefix("2 ") || title == "2" || title.contains("拒绝") || title.contains("取消") || title.contains("reject") || title.contains("cancel")
-            }
-        }
-        
-        let allowed: Set<String> = approve
-            ? ["allow once", "approve once", "allow", "approve", "run", "run once", "允许一次", "仅允许本次", "仅允许本次执行", "批准", "允许", "运行", "批准一次", "允许本次", "允許一次", "核准"]
-            : ["deny", "decline", "reject", "拒绝", "不允许", "拒絕"]
-        return allowed.contains(title)
-    }
-
-    static func matchesRequest(_ request: CodexPendingRequest, texts: [String]) -> Bool {
-        if let digest = request.commandDigest {
-            let matchedDigest = texts.contains {
-                SHA256.hash(data: Data($0.trimmingCharacters(in: .whitespacesAndNewlines).utf8)).map { String(format: "%02x", $0) }.joined() == digest
-            }
-            if matchedDigest { return true }
-        }
-        return request.context.map { containsContext($0, texts: texts) } ?? false
-    }
-
-    static func containsContext(_ context: String, texts: [String]) -> Bool {
-        let target = context.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else { return false }
-        
-        let firstLine = target.components(separatedBy: .newlines).first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? target
-        let values = texts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-        
-        // Exact match of full context
-        if values.contains(target) { return true }
-        // Match just the first line (e.g., question title, ignoring added options)
-        if !firstLine.isEmpty && values.contains(firstLine) { return true }
-        
-        // Partial match fallback
-        return values.contains { uiText in
-            if uiText.contains(firstLine) { return true }
-            if target.contains(uiText) && uiText.count > 15 { return true }
-            // Handle UI text truncated with ellipsis
-            let cleanUI = uiText.replacingOccurrences(of: "...", with: "").replacingOccurrences(of: "…", with: "")
-            return target.contains(cleanUI) && cleanUI.count > 15
-        }
-    }
-}
-

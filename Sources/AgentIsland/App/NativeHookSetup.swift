@@ -15,6 +15,27 @@ enum NativeHookSetup {
         // Claude Code keeps hooks in settings.json; the other two use hooks.json.
         let fileName = source == "claude" ? "settings.json" : "hooks.json"
         let verb = removing ? "移除" : "安装"
+        // Claude Code has one user-level settings file, at a fixed place, so
+        // there is nothing to go looking for: say what will change and do it.
+        // The other assistants' files move between versions and stay a choice.
+        if source == "claude" {
+            let usual = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
+            let quick = NSAlert()
+            quick.messageText = "\(verb) \(display) Hook？"
+            quick.informativeText = (removing
+                ? "将从 \(usual.path) 里移除 AgentIsland 自己的条目，其他工具的 Hook 保留，原文件先备份。"
+                : "将修改 \(usual.path)：只追加 AgentIsland 自己的条目，其他工具的 Hook 保留，原文件先备份；重复安装是替换，不会叠加。\n\n装好后可以可靠显示「等待授权」，并能在灵动岛里回答 Claude 的单选问题。已经开着的 Claude 会话要重新开一个才会生效。")
+            quick.addButton(withTitle: verb)
+            quick.addButton(withTitle: "选择其他位置…")
+            quick.addButton(withTitle: "取消")
+            switch quick.runModal() {
+            case .alertFirstButtonReturn:
+                run(source: source, display: display, removing: removing, helperPath: executable.path, targetPath: usual.path)
+                return
+            case .alertSecondButtonReturn: break   // the chooser below
+            default: return
+            }
+        }
         let intro = NSAlert()
         intro.messageText = "\(verb) \(display) Hook"
         let claudeNote = source == "claude"
@@ -25,7 +46,8 @@ enum NativeHookSetup {
             : "接下来选择该助手的 \(fileName)，或选择包含它的目录。安装会备份现有配置并保留其他 Hook；如果目录中没有文件，将创建 \(fileName)。请先确认该助手版本读取此位置。") + claudeNote
         intro.addButton(withTitle: "选择位置")
         intro.addButton(withTitle: "取消")
-        guard intro.runModal() == .alertFirstButtonReturn else { return }
+        // Claude's own dialog above has already explained and offered to cancel.
+        guard source == "claude" || intro.runModal() == .alertFirstButtonReturn else { return }
         let panel = NSOpenPanel()
         panel.title = "选择 \(display) 的 Hook 配置或目录"
         panel.canChooseFiles = true
@@ -53,8 +75,10 @@ enum NativeHookSetup {
         confirm.addButton(withTitle: verb)
         confirm.addButton(withTitle: "取消")
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
-        let helperPath = executable.path
-        let targetPath = destination.path
+        run(source: source, display: display, removing: removing, helperPath: executable.path, targetPath: destination.path)
+    }
+
+    private static func run(source: String, display: String, removing: Bool, helperPath: String, targetPath: String) {
         Task {
             let success = await Task.detached(priority: .userInitiated) {
                 let process = Process()

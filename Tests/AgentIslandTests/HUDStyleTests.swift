@@ -12,9 +12,9 @@ final class HUDStyleTests: XCTestCase {
     }
 
     func testClosedCapsuleWidensOnlyWhenDotsDoNotFit() {
-        XCTAssertEqual(HUDStyle.closedWidth(dots: 0), 112)
-        XCTAssertEqual(HUDStyle.closedWidth(dots: 5), 112)
-        XCTAssertGreaterThan(HUDStyle.closedWidth(dots: 6), 112)
+        XCTAssertEqual(HUDStyle.closedLength(dots: 0), 112)
+        XCTAssertEqual(HUDStyle.closedLength(dots: 5), 112)
+        XCTAssertGreaterThan(HUDStyle.closedLength(dots: 6), 112)
     }
 
     func testOpenHeightIsRowsTimes56Plus14() {
@@ -44,15 +44,6 @@ final class HUDStyleTests: XCTestCase {
         // Failed and interrupted must not borrow the "needs you" red.
         XCTAssertNotEqual(HUDStyle.lightHex(for: .failed), HUDStyle.redHex)
         XCTAssertNotEqual(HUDStyle.lightHex(for: .interrupted), HUDStyle.redHex)
-    }
-
-    func testOpensByItselfOnlyForRedOrUnviewedGreen() {
-        XCTAssertTrue(HUDStyle.opensAutomatically([.idle, .awaitingInput]))
-        XCTAssertTrue(HUDStyle.opensAutomatically([.running, .completed]))
-        XCTAssertFalse(HUDStyle.opensAutomatically([]))
-        XCTAssertFalse(HUDStyle.opensAutomatically([.idle, .unknown]))
-        XCTAssertFalse(HUDStyle.opensAutomatically([.running, .running]))
-        XCTAssertFalse(HUDStyle.opensAutomatically([.failed, .interrupted]))
     }
 
     func testRowSpacingMatchesTheSpec() {
@@ -85,8 +76,8 @@ final class HUDStyleTests: XCTestCase {
 
 final class HUDIconStyleTests: XCTestCase {
     func testIconsWidenTheClosedCapsuleOnlyWhenNeeded() {
-        XCTAssertEqual(HUDStyle.closedWidth(dots: 3, icons: true), HUDStyle.closedSize.width)
-        XCTAssertGreaterThan(HUDStyle.closedWidth(dots: 6, icons: true), HUDStyle.closedWidth(dots: 6, icons: false))
+        XCTAssertEqual(HUDStyle.closedLength(dots: 3, icons: true), HUDStyle.closedSize.width)
+        XCTAssertGreaterThan(HUDStyle.closedLength(dots: 6, icons: true), HUDStyle.closedLength(dots: 6, icons: false))
     }
 }
 

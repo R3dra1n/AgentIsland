@@ -50,10 +50,6 @@ enum HUDStyle {
         return max(closedSize.width, needed)
     }
 
-    static func closedWidth(dots: Int, icons: Bool = false) -> CGFloat {
-        closedLength(dots: dots, icons: icons)
-    }
-
     /// The closed capsule: wide and short with dots in a row, or (the "直列"
     /// layout) a narrow pill with the dots stacked top to bottom.
     static func closedCapsule(dots: Int, icons: Bool = false, vertical: Bool = false) -> CGSize {
@@ -212,9 +208,5 @@ enum HUDStyle {
     /// user has already collapsed on.
     static func attentionKeys(_ items: [AIObserverItem]) -> Set<String> {
         Set(items.filter { $0.state == .awaitingInput || $0.state == .completed }.map { "\($0.id)|\($0.state)" })
-    }
-
-    static func opensAutomatically(_ states: [AIState]) -> Bool {
-        states.contains { $0 == .awaitingInput || $0 == .completed }
     }
 }

@@ -6,7 +6,7 @@ Claude Code 的会话记录里没有「等待授权」这个状态：`permission
 
 ## 安装与移除
 
-在应用设置的「可选 Hook → 配置 Claude Code Hook…」选择 `~/.claude/settings.json`（面板默认开在 `~/.claude`），确认路径后安装；「移除 Claude Code Hook…」只移除 AgentIsland 自己的条目。两者都不需要 Python。命令行等价操作：
+在应用设置的「可选 Hook → 配置 Claude Code Hook…」里点「安装」即可（1.3.18 起）：对话框写明将修改 `~/.claude/settings.json`，不用再自己找文件；配置在别处时点「选择其他位置…」。「移除 Claude Code Hook…」只移除 AgentIsland 自己的条目。两者都不需要 Python。命令行等价操作：
 
 ```sh
 AgentIslandHook --install   --source claude --output ~/.claude/settings.json

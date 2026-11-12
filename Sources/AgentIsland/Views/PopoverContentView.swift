@@ -41,6 +41,7 @@ extension ToggleStyle where Self == AppleNativeToggleStyle {
 
 public struct PopoverContentView: View {
     @ObservedObject var appState: AppState
+    @State private var opensAtLogin = false
 
     public init(appState: AppState) {
         self.appState = appState
@@ -174,6 +175,19 @@ public struct PopoverContentView: View {
             }
 
             settingsGroup("通知与集成") {
+                #if !AGENTISLAND_ISOLATED_PREVIEW
+                toggleRow("登录时自动启动", isOn: Binding(
+                    get: { opensAtLogin },
+                    set: { wanted in
+                        let problem = LoginItem.set(wanted)
+                        opensAtLogin = LoginItem.isEnabled
+                        if let problem {
+                            let alert = NSAlert(); alert.messageText = "登录时自动启动"; alert.informativeText = problem; alert.runModal()
+                        }
+                    }
+                ))
+                .onAppear { opensAtLogin = LoginItem.isEnabled }
+                #endif
                 toggleRow("系统提示音", isOn: $appState.soundAlertEnabled)
                 settingsRow("可选 Hook") {
                     Menu("配置") {
